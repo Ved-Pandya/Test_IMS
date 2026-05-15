@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useAuth } from "./hooks/useAuth";
-import { login, register, logout } from "./firebase/auth";
+import { login, logout } from "./firebase/auth"; // <-- 'register' is removed here
 import AuthScreen from "./components/auth/AuthScreen";
 import StudentDashboard from "./components/dashboard/StudentDashboard";
 import TeacherDashboard from "./components/dashboard/TeacherDashboard";
+import AdminDashboard from "./components/dashboard/AdminDashboard";
 import ExamView from "./components/exam/ExamView";
 import AttemptReview from "./components/dashboard/AttemptReview";
 
@@ -36,8 +37,9 @@ export default function App() {
     );
   }
 
+  // If no user is logged in, show the pure Login screen (no registration)
   if (!user) {
-    return <AuthScreen onLogin={login} onRegister={register} />;
+    return <AuthScreen onLogin={login} />; 
   }
 
   const handleStartTest = (test, preview = false) => {
@@ -58,7 +60,7 @@ export default function App() {
       <ExamView
         test={activeTest}
         studentId={previewMode ? "demo-student" : user.uid}
-        studentName={previewMode ? "Demo Student" : profile.name}
+        studentName={previewMode ? "Demo Student" : profile?.name || "Student"}
         previewMode={previewMode}
         onCancel={resetSession}
         onSubmit={(attempt) => {
@@ -71,6 +73,11 @@ export default function App() {
 
   if (view === "review" && submittedAttempt && activeTest) {
     return <AttemptReview attempt={submittedAttempt} test={activeTest} onBack={resetSession} />;
+  }
+
+  // Routing based on the user's role
+  if (profile?.role === "admin") {
+    return <AdminDashboard profile={profile} onLogout={logout} />;
   }
 
   if (profile?.role === "teacher") {

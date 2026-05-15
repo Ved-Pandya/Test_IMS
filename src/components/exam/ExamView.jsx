@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Btn, Badge, Card, C, Divider, font } from "../ui/Primitives";
+import { Btn, Badge, Card, C, font } from "../ui/Primitives";
 import { formatTime } from "../../utils/format";
 import { submitAttempt } from "../../firebase/attempts";
 
@@ -8,31 +8,14 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
   const [activeSection, setActiveSection] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(test.duration * 60);
   const [submitting, setSubmitting] = useState(false);
+  
   const timerRef = useRef(null);
+  const gracePeriodRef = useRef(true);
 
   const flatQuestions = useMemo(
     () => test.sections.flatMap((section) => section.questions.map((question) => ({ ...question, sectionName: section.name }))),
     [test]
   );
-
-  useEffect(() => {
-    timerRef.current = window.setInterval(() => {
-      setSecondsLeft((current) => {
-        if (current <= 1) {
-          window.clearInterval(timerRef.current);
-          handleSubmit("Timer expired");
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(timerRef.current);
-  }, []);
-
-  const handleSelect = (questionId, optionIndex) => {
-    setAnswers((state) => ({ ...state, [questionId]: optionIndex }));
-  };
 
   const handleSubmit = useCallback(
     async (reason) => {
@@ -50,7 +33,7 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
         total: flatQuestions.length,
         timeTaken: test.duration * 60 - secondsLeft,
         reason,
-        violations: [],
+        violations: reason.includes("Auto-submitted") ? [{ time: new Date().toLocaleString(), reason }] : [],
         submittedAt: new Date().toLocaleString(),
       };
 
@@ -70,6 +53,75 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
     [answers, flatQuestions, onSubmit, previewMode, studentId, studentName, secondsLeft, submitting, test.id, test.duration]
   );
 
+  // 1. Timer Hook
+  useEffect(() => {
+    timerRef.current = window.setInterval(() => {
+      setSecondsLeft((current) => {
+        if (current <= 1) {
+          window.clearInterval(timerRef.current);
+          handleSubmit("Timer expired");
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timerRef.current);
+  }, [handleSubmit]);
+
+  // 2. Stable Submit Reference (prevents listeners from resetting every second)
+  const submitRef = useRef(handleSubmit);
+  useEffect(() => {
+    submitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  // 3. Independent Grace Period Hook (Runs exactly once)
+  useEffect(() => {
+    const graceTimer = setTimeout(() => {
+      gracePeriodRef.current = false;
+    }, 2000);
+    return () => clearTimeout(graceTimer);
+  }, []);
+
+  // 4. Anti-Cheat Event Listeners Hook
+  useEffect(() => {
+    if (previewMode) return;
+
+    const handleVisibilityChange = () => {
+      if (gracePeriodRef.current) return;
+      if (document.hidden || document.visibilityState === "hidden") {
+        submitRef.current("Auto-submitted: Backgrounded app, switched tabs, or locked screen");
+      }
+    };
+
+    const handlePageHide = () => {
+      if (gracePeriodRef.current) return;
+      submitRef.current("Auto-submitted: Closed the browser app or navigated away");
+    };
+
+    const handleBlur = () => {
+      if (gracePeriodRef.current) return;
+      setTimeout(() => {
+        if (document.hidden) return; 
+        submitRef.current("Auto-submitted: Lost window focus (opened notifications or split-screen)");
+      }, 200);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("blur", handleBlur);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [previewMode]); // Only re-run if preview mode changes, not every second!
+
+  const handleSelect = (questionId, optionIndex) => {
+    setAnswers((state) => ({ ...state, [questionId]: optionIndex }));
+  };
+
   const section = test.sections[activeSection];
   const answeredCount = Object.keys(answers).length;
 
@@ -77,7 +129,7 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60, gap: 16 }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: font.body }}>
-          ← Back
+          ← Cancel
         </button>
         <div style={{ width: 1, height: 24, background: C.border }} />
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -89,6 +141,16 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
       </div>
 
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "32px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
+        {!previewMode && (
+          <div style={{ background: C.redDim, border: `1px solid ${C.red}44`, borderRadius: 8, padding: "12px 16px", color: C.redText, fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <strong style={{ display: "block", marginBottom: 2 }}>Strict Exam Mode Active</strong>
+              Do not change tabs, minimize the browser, open notifications, or split your screen. Doing so will immediately auto-submit your exam.
+            </div>
+          </div>
+        )}
+
         <Card style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Section</div>
@@ -110,15 +172,11 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
               key={sectionItem.id}
               onClick={() => setActiveSection(index)}
               style={{
-                padding: "9px 18px",
-                borderRadius: 10,
+                padding: "9px 18px", borderRadius: 10,
                 border: `1px solid ${activeSection === index ? C.accent : C.border}`,
                 background: activeSection === index ? C.accentDim : C.surface,
                 color: activeSection === index ? C.accentText : C.textSecondary,
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: "pointer",
-                fontFamily: font.body,
+                fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font.body,
               }}
             >
               {sectionItem.name} ({sectionItem.questions.length})
@@ -128,24 +186,17 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
 
         <Card>
           <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Answer the questions below and submit before the timer ends.</div>
-
           {section.questions.map((question, questionIndex) => {
             const currentAnswer = answers[question.id];
             return (
               <div key={question.id} style={{ marginBottom: 28 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.accentDim, display: "grid", placeItems: "center", fontWeight: 700, color: C.accentText }}>
-                    {questionIndex + 1}
-                  </div>
+                  <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.accentDim, display: "grid", placeItems: "center", fontWeight: 700, color: C.accentText }}>{questionIndex + 1}</div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>{question.text}</div>
                 </div>
                 {question.passage && (
                   <div style={{ marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, color: C.textSecondary, lineHeight: 1.8 }}>
-                    {question.passage.split("\n").filter(Boolean).map((paragraph, idx) => (
-                      <p key={idx} style={{ margin: "0 0 10px" }}>
-                        {paragraph}
-                      </p>
-                    ))}
+                    {question.passage.split("\n").filter(Boolean).map((paragraph, idx) => (<p key={idx} style={{ margin: "0 0 10px" }}>{paragraph}</p>))}
                   </div>
                 )}
                 <div style={{ display: "grid", gap: 10 }}>
@@ -153,19 +204,11 @@ export default function ExamView({ test, studentId, studentName, previewMode, on
                     const selected = currentAnswer === optionIndex;
                     return (
                       <button
-                        key={optionIndex}
-                        type="button"
-                        onClick={() => handleSelect(question.id, optionIndex)}
+                        key={optionIndex} type="button" onClick={() => handleSelect(question.id, optionIndex)}
                         style={{
-                          textAlign: "left",
-                          borderRadius: 12,
-                          border: `1px solid ${selected ? C.accent : C.border}`,
-                          background: selected ? C.accentDim : C.surface,
-                          color: selected ? C.accentText : C.textPrimary,
-                          padding: "14px 18px",
-                          cursor: "pointer",
-                          fontFamily: font.body,
-                          fontSize: 14,
+                          textAlign: "left", borderRadius: 12, border: `1px solid ${selected ? C.accent : C.border}`,
+                          background: selected ? C.accentDim : C.surface, color: selected ? C.accentText : C.textPrimary,
+                          padding: "14px 18px", cursor: "pointer", fontFamily: font.body, fontSize: 14,
                         }}
                       >
                         <span style={{ display: "inline-block", width: 24, height: 24, borderRadius: "50%", border: `1.5px solid ${selected ? C.accent : C.textMuted}`, marginRight: 12, textAlign: "center", lineHeight: "24px", color: selected ? C.accentText : C.textMuted }}>

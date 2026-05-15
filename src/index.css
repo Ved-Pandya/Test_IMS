@@ -1,0 +1,9 @@
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0f1117; /* Matches your C.bg color */
+}
+
+* {
+  box-sizing: border-box;
+}
