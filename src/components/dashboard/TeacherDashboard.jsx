@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from "react";
-import { Badge, Btn, Card, C, font, Input } from "../ui/Primitives";
+import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
 import { collection, query, where, getDocs } from "firebase/firestore";
@@ -145,7 +145,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         <Btn variant="ghost" onClick={onLogout}>Sign out</Btn>
       </div>
 
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "36px 24px" }}>
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "36px 24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
           <h1 style={{ fontFamily: font.heading, fontSize: 24, fontWeight: 800, color: C.textPrimary, margin: 0 }}>My Tests</h1>
           <div style={{ display: "flex", gap: 12 }}>
@@ -160,16 +160,17 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
           {tests.map((test) => {
             const attemptsForTest = allAttempts.filter((attempt) => attempt.testId === test.id);
             return (
-              <Card key={test.id} style={{ display: "flex", alignItems: "center", gap: 20 }}>
+              /* UPDATED: Increased vertical padding slightly to allow cleaner button distribution space */
+              <Card key={test.id} style={{ display: "flex", alignItems: "center", gap: 24, padding: "24px 28px" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontFamily: font.heading, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <span style={{ fontFamily: font.heading, fontSize: 17, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
                     <Badge color={test.isActive ? "green" : "amber"}>{test.isActive ? "Active" : "Inactive"}</Badge>
                   </div>
                   
                   <div style={{ fontSize: 13, color: C.textMuted, display: "flex", gap: 18, alignItems: "center" }}>
                     <span>⏱ {test.duration} min</span>
-                    <span>👥 {test.enrolledStudents.length} enrolled</span>
+                    <span>👥 {test.enrolledStudents?.length || 0} enrolled</span>
                     <span>📊 {attemptsForTest.length} attempts</span>
                     <div style={{ width: 1, height: 14, background: C.border }} />
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -180,10 +181,12 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                   </div>
                 </div>
                 
-                <div style={{ display: "flex", gap: 10 }}>
-                  <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 16px" }}>🏆 Leaderboard</Btn>
-                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 16px" }}>Assign Test</Btn>
-                  <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 16px" }}>View Results</Btn>
+                {/* UPDATED: Structured flex row spacing rules containing exactly 4 buttons tightly fit */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <Btn variant="ghost" onClick={() => onDemoTest(test)} style={{ fontSize: 13, padding: "8px 14px", border: `1px solid ${C.border}` }}>👁 Preview</Btn>
+                  <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 14px" }}>🏆 Leaderboard</Btn>
+                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign Test</Btn>
+                  <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>View Results</Btn>
                 </div>
               </Card>
             );

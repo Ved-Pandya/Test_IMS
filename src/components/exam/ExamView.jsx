@@ -1,264 +1,376 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Btn, Badge, Card, C, font, Input } from "../ui/Primitives";
-import { formatTime } from "../../utils/format";
-import { submitAttempt } from "../../firebase/attempts";
+import { useState, useEffect } from "react";
+import { Btn, Card, Badge, C, font } from "../ui/Primitives";
 
-export default function ExamView({ test, studentId, studentName, previewMode, onCancel, onSubmit }) {
+export default function ExamView({ test, studentProfile, onSubmitExam }) {
+  // --- Exam States ---
+  const [currentSectionIdx, setCurrentSectionIdx] = useState(0);
+  const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
+  
+  // Flattening mapped pointer positions to look up active questions globally or per section
+  const currentSection = test.sections[currentSectionIdx];
+  const currentQuestion = currentSection?.questions[currentQuestionIdx];
+
+  // Answer state mapper: Key format: "questionId" -> value (index for MCQ, string for TITA)
   const [answers, setAnswers] = useState({});
-  const [activeSection, setActiveSection] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(test.duration * 60);
-  const [submitting, setSubmitting] = useState(false);
+  const [markedForReview, setMarkedForReview] = useState(new Set());
   
-  // NEW: Warning System State
-  const [warnings, setWarnings] = useState(0);
-  const [showWarningModal, setShowWarningModal] = useState(false);
-  
-  const timerRef = useRef(null);
-  const gracePeriodRef = useRef(true);
+  // --- Timer Operations Engine ---
+  const [timeLeft, setTimeLeft] = useState((test.duration || 120) * 60);
+  const [timeTaken, setTimeTaken] = useState(0);
 
-  // Fallback marking scheme if the test doesn't have one defined
-  const marking = test.markingScheme || { correct: 1, incorrect: 0 };
-
-  const flatQuestions = useMemo(
-    () => test.sections.flatMap((section) => section.questions.map((question) => ({ ...question, sectionName: section.name }))),
-    [test]
-  );
-
-  const handleSubmit = useCallback(
-    async (reason) => {
-      if (submitting) return;
-      setSubmitting(true);
-      window.clearInterval(timerRef.current);
-
-      // NEW: Advanced Scoring Logic (TITA + Negative Marking)
-      let score = 0;
-      flatQuestions.forEach(q => {
-        const ans = answers[q.id];
-        if (ans !== undefined && ans !== "") {
-          let isCorrect = false;
-          if (q.type === 'tita') {
-            // TITA: Compare text ignoring case and extra spaces
-            isCorrect = String(ans).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
-          } else {
-            // MCQ: Compare index
-            isCorrect = ans === q.correct;
-          }
-          
-          if (isCorrect) {
-            score += marking.correct;
-          } else {
-            score -= marking.incorrect; // Subtract penalty
-          }
-        }
-      });
-
-      const attempt = {
-        testId: test.id,
-        studentId,
-        studentName,
-        answers,
-        score,
-        total: flatQuestions.length * marking.correct, // Max possible score
-        timeTaken: test.duration * 60 - secondsLeft,
-        reason,
-        violations: warnings > 0 ? [{ time: new Date().toLocaleString(), reason: "Received tab-switch warning" }] : [],
-        submittedAt: new Date().toLocaleString(),
-      };
-
-      if (!previewMode && studentId !== "demo-student") {
-        try {
-          const attemptId = await submitAttempt(attempt);
-          attempt.id = attemptId;
-        } catch (error) {
-          setSubmitting(false);
-          alert(error?.message || "Unable to save attempt.");
-          return;
-        }
-      }
-      onSubmit(attempt);
-    },
-    [answers, flatQuestions, onSubmit, previewMode, studentId, studentName, secondsLeft, submitting, test.id, test.duration, marking, warnings]
-  );
-
-  const triggerAntiCheat = useCallback((violationType) => {
-    if (previewMode) return;
-    
-    setWarnings(prev => {
-      const newCount = prev + 1;
-      if (newCount === 1) {
-        setShowWarningModal(true); // Show warning first time
-        return newCount;
-      } else {
-        handleSubmit(`Auto-submitted: Repeated violation (${violationType})`); // Submit second time
-        return newCount;
-      }
-    });
-  }, [handleSubmit, previewMode]);
-
-  // Timer
   useEffect(() => {
-    timerRef.current = window.setInterval(() => {
-      setSecondsLeft((current) => {
-        if (current <= 1) {
-          window.clearInterval(timerRef.current);
-          handleSubmit("Timer expired");
-          return 0;
-        }
-        return current - 1;
-      });
+    if (timeLeft <= 0) {
+      handleAutoSubmit("Timer Expired");
+      return;
+    }
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => prev - 1);
+      setTimeTaken((prev) => prev + 1);
     }, 1000);
-    return () => window.clearInterval(timerRef.current);
-  }, [handleSubmit]);
+    return () => clearInterval(timer);
+  }, [timeLeft]);
 
-  // Anti-Cheat Listeners
-  const submitRef = useRef(triggerAntiCheat);
-  useEffect(() => { submitRef.current = triggerAntiCheat; }, [triggerAntiCheat]);
-
-  useEffect(() => {
-    const graceTimer = setTimeout(() => { gracePeriodRef.current = false; }, 2000);
-    
-    const handleVisibilityChange = () => {
-      if (gracePeriodRef.current || showWarningModal) return;
-      if (document.hidden || document.visibilityState === "hidden") submitRef.current("Switched tabs or minimized");
-    };
-
-    const handleBlur = () => {
-      if (gracePeriodRef.current || showWarningModal) return;
-      setTimeout(() => {
-        if (document.hidden) return; 
-        submitRef.current("Lost window focus");
-      }, 200);
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("blur", handleBlur);
-
-    return () => {
-      clearTimeout(graceTimer);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, [showWarningModal]); 
-
-  const handleSelect = (questionId, value) => {
-    setAnswers((state) => ({ ...state, [questionId]: value }));
+  // Format seconds to human-readable HH:MM:SS format
+  const formatTime = (seconds) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h > 0 ? String(h).padStart(2, "0") + ":" : ""}${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
 
-  const section = test.sections[activeSection];
-  const answeredCount = Object.keys(answers).filter(k => answers[k] !== "").length;
+  // --- Input Modification Handlers ---
+  const handleSelectOption = (optionIndex) => {
+    setAnswers((prev) => ({ ...prev, [currentQuestion.id]: optionIndex }));
+  };
+
+  const handleTitaInput = (textValue) => {
+    setAnswers((prev) => ({ ...prev, [currentQuestion.id]: textValue }));
+  };
+
+  const handleClearAnswer = () => {
+    setAnswers((prev) => {
+      const updated = { ...prev };
+      delete updated[currentQuestion.id];
+      return updated;
+    });
+  };
+
+  const handleToggleMarkReview = () => {
+    setMarkedForReview((prev) => {
+      const updated = new Set(prev);
+      if (updated.has(currentQuestion.id)) {
+        updated.delete(currentQuestion.id);
+      } else {
+        updated.add(currentQuestion.id);
+      }
+      return updated;
+    });
+  };
+
+  // --- Navigation Matrix Controllers ---
+  const handleNext = () => {
+    if (currentQuestionIdx < currentSection.questions.length - 1) {
+      setCurrentQuestionIdx(currentQuestionIdx + 1);
+    } else if (currentSectionIdx < test.sections.length - 1) {
+      setCurrentSectionIdx(currentSectionIdx + 1);
+      setCurrentQuestionIdx(0);
+    }
+  };
+
+  const handlePrev = () => {
+    if (currentQuestionIdx > 0) {
+      setCurrentQuestionIdx(currentQuestionIdx - 1);
+    } else if (currentSectionIdx > 0) {
+      setCurrentSectionIdx(currentSectionIdx - 1);
+      // Set to final question of the previous section
+      setCurrentQuestionIdx(test.sections[currentSectionIdx - 1].questions.length - 1);
+    }
+  };
+
+  // --- Evaluation Strategy Engine ---
+  const processCalculatedGrading = (reasonStr) => {
+    let totalScore = 0;
+    const flatQuestions = test.sections.flatMap((s) => s.questions);
+    const grading = test.markingScheme || { correct: 3, incorrect: 1 };
+
+    flatQuestions.forEach((q) => {
+      const studentAns = answers[q.id];
+      if (studentAns === undefined || studentAns === "") return; // unattempted
+
+      if (q.type === "tita") {
+        const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
+        if (isCorrect) totalScore += grading.correct;
+      } else {
+        const isCorrect = Number(studentAns) === Number(q.correct);
+        if (isCorrect) {
+          totalScore += grading.correct;
+        } else {
+          totalScore -= grading.incorrect; // subtract negative penalty metrics
+        }
+      }
+    });
+
+    return {
+      testId: test.id,
+      testTitle: test.title,
+      studentId: studentProfile.uid,
+      studentName: studentProfile.name,
+      answers,
+      score: totalScore,
+      total: flatQuestions.length * grading.correct,
+      timeTaken,
+      reason: reasonStr,
+      submittedAt: new Date(),
+    };
+  };
+
+  const handleManualSubmit = () => {
+    const flatQuestions = test.sections.flatMap((s) => s.questions);
+    const attemptedCount = Object.keys(answers).filter(k => answers[k] !== "").length;
+    
+    if (window.confirm(`Are you sure you want to finish? You answered ${attemptedCount} / ${flatQuestions.length} questions.`)) {
+      const payload = processCalculatedGrading("Manual Submission");
+      onSubmitExam(payload);
+    }
+  };
+
+  const handleAutoSubmit = (reason) => {
+    alert(`Exam session closing automatically: ${reason}`);
+    const payload = processCalculatedGrading(`Auto Submission (${reason})`);
+    onSubmitExam(payload);
+  };
+
+  // Status mapping helper for question palette dots
+  const getQuestionStatus = (qId) => {
+    const isAnswered = answers[qId] !== undefined && answers[qId] !== "";
+    const isMarked = markedForReview.has(qId);
+
+    if (isMarked && isAnswered) return "purple-answered";
+    if (isMarked) return "purple";
+    if (isAnswered) return "green";
+    return "gray";
+  };
+
+  // Dynamic layout rendering setup helper
+  const hasPassage = currentQuestion?.passage && currentQuestion.passage.trim().length > 0;
+
+  if (!currentQuestion) return <div style={{ color: C.textPrimary, padding: 40 }}>Empty test parameters.</div>;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
+    <div style={{ height: "100vh", background: C.bg, fontFamily: font.body, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       
-      {/* NEW: The Strike-1 Warning Modal */}
-      {showWarningModal && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(220, 38, 38, 0.95)", display: "grid", placeItems: "center", zIndex: 9999, padding: 24 }}>
-          <Card style={{ maxWidth: 500, textAlign: "center", padding: 40 }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
-            <h2 style={{ fontFamily: font.heading, fontSize: 24, margin: "0 0 16px", color: C.redText }}>EXAM VIOLATION WARNING</h2>
-            <p style={{ color: C.textPrimary, fontSize: 16, lineHeight: 1.6, marginBottom: 24 }}>
-              We detected that you left the exam window, changed tabs, or opened another application. 
-              <br/><br/>
-              <strong>This is your ONLY warning.</strong> If you leave this window again, your exam will be instantly submitted with your current score.
-            </p>
-            <Btn variant="primary" onClick={() => { setShowWarningModal(false); gracePeriodRef.current = true; setTimeout(() => gracePeriodRef.current = false, 2000); }} style={{ width: "100%", padding: 16, fontSize: 16, background: C.red, color: "#fff" }}>
-              I Understand, Return to Exam
-            </Btn>
-          </Card>
+      {/* 1. RUNTIME UTILITY HEADER */}
+      <div style={{ height: 64, background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h1 style={{ fontSize: 16, fontFamily: font.heading, fontWeight: 800, color: C.textPrimary, margin: 0 }}>{test.title}</h1>
+          <span style={{ fontSize: 12, color: C.textMuted }}>Candidate: {studentProfile.name}</span>
         </div>
-      )}
-
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60, gap: 16 }}>
-        <button onClick={onCancel} style={{ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: font.body }}>← Cancel</button>
-        <div style={{ width: 1, height: 24, background: C.border }} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 16, color: C.textPrimary }}>{test.title}</span>
+        
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <Badge color={timeLeft < 300 ? "red" : "accent"} style={{ fontSize: 16, padding: "8px 16px", fontFamily: font.mono, fontWeight: 700 }}>
+            ⏱ {formatTime(timeLeft)}
+          </Badge>
+          <Btn variant="primary" onClick={handleManualSubmit} style={{ background: C.red, color: "#fff" }}>Submit Test</Btn>
         </div>
-        <div style={{ flex: 1 }} />
-        <Badge color={secondsLeft <= 60 ? "red" : "accent"}>⏱ {formatTime(secondsLeft)}</Badge>
       </div>
 
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "32px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
-        <Card style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Section</div>
-            <div style={{ fontFamily: font.heading, fontSize: 20, fontWeight: 700, color: C.textPrimary }}>{section.name}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Questions answered</div>
-            <div style={{ fontFamily: font.heading, fontSize: 20, fontWeight: 700, color: C.accentText }}>{answeredCount}/{flatQuestions.length}</div>
-          </div>
-          <div style={{ flex: 1 }} />
-          <Btn variant="ghost" onClick={() => handleSubmit("Manual submit")} disabled={submitting} style={{ padding: "10px 18px" }}>
-            {submitting ? "Submitting…" : "Submit Exam"}
-          </Btn>
-        </Card>
+      {/* 2. SECTION TABS HEADER ROW */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", gap: 4, padding: "4px 24px 0" }}>
+        {test.sections.map((sec, idx) => (
+          <button
+            key={sec.id}
+            onClick={() => { setCurrentSectionIdx(idx); setCurrentQuestionIdx(0); }}
+            style={{
+              padding: "12px 20px",
+              background: "none",
+              border: "none",
+              borderBottom: `3px solid ${currentSectionIdx === idx ? C.accent : "transparent"}`,
+              color: currentSectionIdx === idx ? C.textPrimary : C.textMuted,
+              fontWeight: currentSectionIdx === idx ? 700 : 500,
+              cursor: "pointer",
+              fontFamily: font.body,
+              fontSize: 13
+            }}
+          >
+            {sec.name}
+          </button>
+        ))}
+      </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {test.sections.map((sectionItem, index) => (
-            <button
-              key={sectionItem.id} onClick={() => setActiveSection(index)}
-              style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${activeSection === index ? C.accent : C.border}`, background: activeSection === index ? C.accentDim : C.surface, color: activeSection === index ? C.accentText : C.textSecondary, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font.body }}
-            >
-              {sectionItem.name} ({sectionItem.questions.length})
-            </button>
-          ))}
-        </div>
-
-        <Card>
-          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20, display: "flex", justifyContent: "space-between" }}>
-            <span>Answer the questions below.</span>
-            <span>Marking: +{marking.correct} / -{marking.incorrect}</span>
-          </div>
+      {/* 3. CORE CORE SPLIT WORKSPACE ENGINE */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 280px", overflow: "hidden" }}>
+        
+        {/* LEFT WORKSPACE PANE */}
+        <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
           
-          {section.questions.map((question, questionIndex) => {
-            const currentAnswer = answers[question.id];
-            return (
-              <div key={question.id} style={{ marginBottom: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.accentDim, display: "grid", placeItems: "center", fontWeight: 700, color: C.accentText }}>{questionIndex + 1}</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>
-                    {question.text} {question.type === 'tita' && <Badge color="amber" style={{marginLeft: 8}}>TITA</Badge>}
-                  </div>
+          <div style={{ display: "grid", gridTemplateColumns: hasPassage ? "1fr 1fr" : "1fr", gap: 24, height: "100%", maxHeight: "calc(100vh - 180px)", overflow: "hidden" }}>
+            
+            {/* CONDITIONAL SUB-PANEL A: PASSAGE VIEWPORT OVERFLOW SCROLL */}
+            {hasPassage && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24, overflowY: "auto", height: "100%", lineHeight: 1.6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.accentText, letterSpacing: 0.5, display: "block", marginBottom: 12, textTransform: "uppercase" }}>Reading Comprehension Passage</span>
+                <div style={{ color: C.textPrimary, fontSize: 14, whiteSpace: "pre-wrap" }}>
+                  {currentQuestion.passage}
                 </div>
-                {question.passage && (
-                  <div style={{ marginBottom: 14, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, color: C.textSecondary, lineHeight: 1.8 }}>
-                    {question.passage.split("\n").filter(Boolean).map((paragraph, idx) => (<p key={idx} style={{ margin: "0 0 10px" }}>{paragraph}</p>))}
-                  </div>
-                )}
-                
-                {/* Render MCQ or TITA Input */}
-                {question.type === 'tita' ? (
-                  <div style={{ maxWidth: 400 }}>
-                    <Input 
-                      placeholder="Type your answer here..." 
-                      value={currentAnswer || ""} 
-                      onChange={(val) => handleSelect(question.id, val)} 
-                    />
-                  </div>
-                ) : (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    {question.options.map((option, optionIndex) => {
-                      const selected = currentAnswer === optionIndex;
-                      return (
-                        <button
-                          key={optionIndex} type="button" onClick={() => handleSelect(question.id, optionIndex)}
-                          style={{ textAlign: "left", borderRadius: 12, border: `1px solid ${selected ? C.accent : C.border}`, background: selected ? C.accentDim : C.surface, color: selected ? C.accentText : C.textPrimary, padding: "14px 18px", cursor: "pointer", fontFamily: font.body, fontSize: 14 }}
-                        >
-                          <span style={{ display: "inline-block", width: 24, height: 24, borderRadius: "50%", border: `1.5px solid ${selected ? C.accent : C.textMuted}`, marginRight: 12, textAlign: "center", lineHeight: "24px", color: selected ? C.accentText : C.textMuted }}>
-                            {String.fromCharCode(65 + optionIndex)}
-                          </span>
-                          {option}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
-            );
-          })}
-        </Card>
+            )}
+
+            {/* SUB-PANEL B: ACTIVE QUESTION CONTENT AND CONTROL EVALUATOR */}
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
+              <Card style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+                
+                {/* Meta-Badge Information */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                  <Badge color="accent">Question {currentQuestionIdx + 1} of {currentSection.questions.length}</Badge>
+                  <Badge color={currentQuestion.type === "tita" ? "amber" : "gray"}>
+                    {currentQuestion.type === "tita" ? "TITA Type Input" : "MCQ Single Target Option"}
+                  </Badge>
+                </div>
+
+                {/* Core Text Body String */}
+                <div style={{ fontSize: 16, fontWeight: 600, color: C.textPrimary, lineHeight: 1.5, marginBottom: 24 }}>
+                  {currentQuestion.text}
+                </div>
+
+                {/* Interface Context Routing Variant Input Shells */}
+                <div style={{ flex: 1 }}>
+                  {currentQuestion.type === "tita" ? (
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Type your answer string down below:</label>
+                      <input
+                        type="text"
+                        value={answers[currentQuestion.id] || ""}
+                        onChange={(e) => handleTitaInput(e.target.value)}
+                        placeholder="Type text or numerical answer value evaluation sequence..."
+                        style={{ width: "100%", padding: "14px 16px", borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.body, fontSize: 15, outline: "none" }}
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {currentQuestion.options?.map((opt, idx) => {
+                        const isSelected = answers[currentQuestion.id] === idx;
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => handleSelectOption(idx)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              padding: "14px 16px",
+                              borderRadius: 8,
+                              background: isSelected ? C.accentDim : C.bg,
+                              border: `1px solid ${isSelected ? C.accent : C.border}`,
+                              cursor: "pointer",
+                              transition: "all 0.2s ease"
+                            }}
+                          >
+                            <span style={{
+                              width: 24, height: 24, borderRadius: "50%",
+                              border: `1.5px solid ${isSelected ? C.accent : C.textMuted}`,
+                              marginRight: 14, textAlign: "center", lineHeight: "24px",
+                              fontSize: 12, fontWeight: 700,
+                              color: isSelected ? C.accentText : C.textMuted,
+                              background: isSelected ? C.surface : "transparent"
+                            }}>
+                              {String.fromCharCode(65 + idx)}
+                            </span>
+                            <span style={{ color: isSelected ? C.textPrimary : C.textSecondary, fontSize: 14, fontWeight: isSelected ? 600 : 400 }}>{opt}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Question Lower Interlock Controller Row */}
+                <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.border}`, paddingTop: 20, marginTop: 24 }}>
+                  <Btn variant="ghost" onClick={handleToggleMarkReview} style={{ border: `1px solid ${C.border}`, fontSize: 13 }}>
+                    🔖 {markedForReview.has(currentQuestion.id) ? "Unmark Review" : "Mark for Review"}
+                  </Btn>
+                  <Btn variant="ghost" onClick={handleClearAnswer} disabled={answers[currentQuestion.id] === undefined} style={{ fontSize: 13 }}>
+                    🚫 Clear Response
+                  </Btn>
+                </div>
+
+              </Card>
+            </div>
+
+          </div>
+
+          {/* LOWER RUNTIME SYSTEM TOGGLE SWITCH TRAYS */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Btn variant="ghost" onClick={handlePrev} disabled={currentSectionIdx === 0 && currentQuestionIdx === 0}>
+              ← Previous Question
+            </Btn>
+            <Btn variant="primary" onClick={handleNext} disabled={currentSectionIdx === test.sections.length - 1 && currentQuestionIdx === currentSection.questions.length - 1}>
+              Save & Next →
+            </Btn>
+          </div>
+
+        </div>
+
+        {/* RIGHT PALETTE DASHBOARD RAIL PANE */}
+        <div style={{ background: C.surface, borderLeft: `1px solid ${C.border}`, padding: 20, display: "flex", flexDirection: "column", gap: 20, overflowY: "auto" }}>
+          
+          {/* Diagnostic Stats Legend Summary Badge Container */}
+          <div>
+            <h4 style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, color: C.textSecondary, textTransform: "uppercase", letterSpacing: 0.5 }}>Question Status Matrix</h4>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.textSecondary }}><span style={{ width: 10, height: 10, borderRadius: "2px", background: C.green }} /> Answered</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.textSecondary }}><span style={{ width: 10, height: 10, borderRadius: "2px", background: C.border }} /> Unanswered</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.textSecondary }}><span style={{ width: 10, height: 10, borderRadius: "2px", background: "#4C6EF5" }} /> Review Only</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.textSecondary }}><span style={{ width: 10, height: 10, borderRadius: "2px", background: "#7048E8" }} /> Marked + Ans</div>
+            </div>
+          </div>
+
+          <div style={{ width: "100%", height: 1, background: C.border }} />
+
+          {/* Live Component Matrix Array Node Core */}
+          <div style={{ flex: 1 }}>
+            <h4 style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, color: C.textSecondary, textTransform: "uppercase", letterSpacing: 0.5 }}>{currentSection.name} Palette</h4>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {currentSection.questions.map((q, idx) => {
+                const status = getQuestionStatus(q.id);
+                const isActive = currentQuestionIdx === idx;
+                
+                let bg = C.bg, border = `1px solid ${C.border}`, textCol = C.textSecondary;
+                if (status === "green") { bg = C.green; border = `1px solid ${C.green}`; textCol = "#fff"; } 
+                else if (status === "purple") { bg = "#4C6EF5"; border = "1px solid #4C6EF5"; textCol = "#fff"; } 
+                else if (status === "purple-answered") { bg = "#7048E8"; border = "1px solid #7048E8"; textCol = "#fff"; }
+
+                if (isActive) border = `2px solid ${C.accentText || C.textPrimary}`;
+
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => setCurrentQuestionIdx(idx)}
+                    style={{
+                      width: 36, height: 36, borderRadius: 6,
+                      background: bg, border, color: textCol,
+                      fontWeight: 700, fontSize: 12, cursor: "pointer",
+                      fontFamily: font.mono, display: "grid", placeItems: "center",
+                      boxShadow: isActive ? "0 0 8px rgba(99, 102, 241, 0.4)" : "none"
+                    }}
+                  >
+                    {idx + 1}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Informational Marking Scheme Summary footer layout cards */}
+          <Card style={{ padding: 12, background: C.bg }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 4 }}>SECTION MARKING</div>
+            <div style={{ fontSize: 13, color: C.textPrimary, fontWeight: 600 }}>
+              Correct: <span style={{ color: C.greenText }}>+{test.markingScheme?.correct || 3}</span> | Incorrect: <span style={{ color: C.redText }}>-{test.markingScheme?.incorrect || 1}</span>
+            </div>
+          </Card>
+
+        </div>
+
       </div>
+
     </div>
   );
 }

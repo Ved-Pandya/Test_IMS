@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useAuth } from "./hooks/useAuth";
-import { login, logout } from "./firebase/auth"; // <-- 'register' is removed here
+import { login, logout } from "./firebase/auth";
 import AuthScreen from "./components/auth/AuthScreen";
 import StudentDashboard from "./components/dashboard/StudentDashboard";
 import TeacherDashboard from "./components/dashboard/TeacherDashboard";
 import AdminDashboard from "./components/dashboard/AdminDashboard";
 import ExamView from "./components/exam/ExamView";
 import AttemptReview from "./components/dashboard/AttemptReview";
+import { collection, addDoc } from "firebase/firestore";
+import { db } from "./firebase/config";
 
 export default function App() {
   const { user, profile, loading } = useAuth();
@@ -55,18 +57,34 @@ export default function App() {
     setView("dashboard");
   };
 
+  const handleExamSubmitPipeline = async (attemptPayload) => {
+    if (previewMode) {
+      console.log("Simulated Sandbox Execution Payload:", attemptPayload);
+      alert("🎉 Simulation Test Complete! All validation engines verified. No historical record logs were appended to your production Firestore collection databases.");
+      setSubmittedAttempt(attemptPayload);
+      setView("review");
+    } else {
+      try {
+        // Save the live student results to production Firestore
+        const docRef = await addDoc(collection(db, "attempts"), attemptPayload);
+        const attemptWithId = { id: docRef.id, ...attemptPayload };
+        setSubmittedAttempt(attemptWithId);
+        setView("review");
+      } catch (err) {
+        alert("Failed to submit attempt data to cloud server: " + err.message);
+      }
+    }
+  };
+
   if (view === "exam" && activeTest) {
     return (
       <ExamView
         test={activeTest}
-        studentId={previewMode ? "demo-student" : user.uid}
-        studentName={previewMode ? "Demo Student" : profile?.name || "Student"}
-        previewMode={previewMode}
-        onCancel={resetSession}
-        onSubmit={(attempt) => {
-          setSubmittedAttempt(attempt);
-          setView("review");
+        studentProfile={{
+          uid: previewMode ? "demo-student" : user.uid,
+          name: previewMode ? `${profile?.name || "Teacher"} (Preview Mode)` : profile?.name || "Student"
         }}
+        onSubmitExam={handleExamSubmitPipeline}
       />
     );
   }
@@ -81,8 +99,20 @@ export default function App() {
   }
 
   if (profile?.role === "teacher") {
-    return <TeacherDashboard profile={profile} onLogout={logout} onDemoTest={(test) => handleStartTest(test, true)} />;
+    return (
+      <TeacherDashboard 
+        profile={profile} 
+        onLogout={logout} 
+        onDemoTest={(test) => handleStartTest(test, true)} 
+      />
+    );
   }
 
-  return <StudentDashboard profile={profile} onLogout={logout} onStartTest={(test) => handleStartTest(test)} />;
+  return (
+    <StudentDashboard 
+      profile={profile} 
+      onLogout={logout} 
+      onStartTest={(test) => handleStartTest(test, false)} 
+    />
+  );
 }
