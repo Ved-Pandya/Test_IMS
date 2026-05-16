@@ -19,6 +19,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+// Secondary app instance so the Admin isn't logged out when creating accounts
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAdminApp");
 const secondaryAuth = getAuth(secondaryApp);
 
@@ -49,7 +50,8 @@ export function subscribeToAuth(callback) {
 }
 
 // Admin Helper: Bulk/Single Student Creation
-export async function createStudentAsAdmin({ email, name, batch, regNo }) {
+// UPDATED: Now receives and saves `mobile` and `exam`
+export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, exam }) {
   const randomPassword = Math.random().toString(36).slice(-8);
   const cred = await createUserWithEmailAndPassword(secondaryAuth, email, randomPassword);
   
@@ -60,6 +62,8 @@ export async function createStudentAsAdmin({ email, name, batch, regNo }) {
     role: "student",
     batch: batch || "Unassigned",
     regNo: regNo || "N/A",
+    mobile: mobile || "N/A",
+    exam: exam || "Unassigned",
     createdAt: new Date(),
   });
 
@@ -85,7 +89,7 @@ export async function createTeacherAsAdmin({ email, name, exams }) {
   return { email, password: randomPassword, name, role: "teacher" };
 }
 
-// NEW: Admin Helper: Change Student Batch by Email
+// Admin Helper: Change Student Batch by Email
 export async function updateStudentBatchByEmail(email, newBatch) {
   const q = query(collection(db, "users"), where("email", "==", email), where("role", "==", "student"));
   const snap = await getDocs(q);

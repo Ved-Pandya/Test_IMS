@@ -12,11 +12,13 @@ export default function AdminDashboard({ profile, onLogout }) {
   // Bulk Upload State
   const [studentLogs, setStudentLogs] = useState([]);
 
-  // Single Student State
+  // UPDATED: Single Student State (Added Mobile and Exam)
   const [sName, setSName] = useState("");
   const [sEmail, setSEmail] = useState("");
   const [sBatch, setSBatch] = useState("");
   const [sRegNo, setSRegNo] = useState("");
+  const [sMobile, setSMobile] = useState("");
+  const [sExam, setSExam] = useState("");
   const [singleStudentCreds, setSingleStudentCreds] = useState(null);
 
   // Update Batch State
@@ -34,7 +36,7 @@ export default function AdminDashboard({ profile, onLogout }) {
   const [editTeacher, setEditTeacher] = useState(null);
   const [editExams, setEditExams] = useState([]);
 
-  const availableExams = ["CAT", "CMAT", "CLAT", "IPMAT"];
+  const availableExams = ["CAT", "CMAT", "CLAT", "IPMAT", "GMAT", "BANK-PO"];
 
   // Fetch teachers when switching to the teachers tab
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function AdminDashboard({ profile, onLogout }) {
     setTExams(prev => prev.includes(exam) ? prev.filter(e => e !== exam) : [...prev, exam]);
   };
 
+  // --- BULK ENROLLMENT PARSER ---
   const handleStudentUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -73,18 +76,41 @@ export default function AdminDashboard({ profile, onLogout }) {
         const results = [];
 
         for (let row of rows) {
+          const regNo = String(row["RegNo"] || row["reg no"] || row["Registration No"] || "").trim();
+          const name = String(row["Name"] || row["name"] || "").trim();
+          const email = String(row["Email"] || row["email"] || "").trim().toLowerCase();
+          const mobile = String(row["Mobile"] || row["mobile"] || "").trim();
+          const batch = String(row["BatchNo"] || row["batch no"] || row["Batch"] || "").trim();
+          const exam = String(row["Exam"] || row["exam"] || "").trim();
+
+          if (!email || !name) {
+            setStudentLogs(prev => [...prev, `⚠️ Skipped row: Missing Name or Email`]);
+            continue;
+          }
+
           try {
             const result = await createStudentAsAdmin({ 
-              name: String(row.Name || "").trim(), 
-              email: String(row.Email || "").trim(), 
-              batch: String(row.Batch || "").trim(), 
-              regNo: String(row.RegNo || "").trim() 
+              name, email, batch, regNo, mobile, exam
             });
-            results.push(result);
-            setStudentLogs(prev => [...prev, `✅ Created: ${row.Email}`]);
+            
+            results.push({
+              "Registration No": regNo,
+              "Name": name,
+              "Email": email,
+              "Password": result.password || "Generated",
+              "Mobile": mobile,
+              "Batch": batch,
+              "Exam": exam,
+              "Status": "Success"
+            });
+            setStudentLogs(prev => [...prev, `✅ Created: ${email}`]);
           } catch (err) {
-            results.push({ email: row.Email, password: "-", regNo: row.RegNo, status: `Error: ${err.message}` });
-            setStudentLogs(prev => [...prev, `❌ Failed ${row.Email}: ${err.message}`]);
+            results.push({
+              "Registration No": regNo, "Name": name, "Email": email,
+              "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
+              "Status": `Error: ${err.message}`
+            });
+            setStudentLogs(prev => [...prev, `❌ Failed ${email}: ${err.message}`]);
           }
         }
 
@@ -97,23 +123,33 @@ export default function AdminDashboard({ profile, onLogout }) {
         setStudentLogs(prev => [...prev, `Critical Error: ${err.message}`]);
       } finally {
         setLoading(false);
+        e.target.value = ""; 
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
+  // --- UPDATED: ADD SINGLE STUDENT ---
   const handleAddSingleStudent = async () => {
-    if (!sName || !sEmail || !sBatch || !sRegNo) return alert("All fields are required for a single student.");
+    if (!sName || !sEmail || !sBatch || !sRegNo || !sMobile || !sExam) {
+      return alert("All fields are required for a single student.");
+    }
+    
     setLoading(true);
     try {
       const result = await createStudentAsAdmin({ 
         name: sName.trim(), 
         email: sEmail.trim(), 
         batch: sBatch.trim(), 
-        regNo: sRegNo.trim() 
+        regNo: sRegNo.trim(),
+        mobile: sMobile.trim(),
+        exam: sExam.trim()
       });
       setSingleStudentCreds(result);
-      setSName(""); setSEmail(""); setSBatch(""); setSRegNo("");
+      
+      // Clear all fields on success
+      setSName(""); setSEmail(""); setSBatch(""); 
+      setSRegNo(""); setSMobile(""); setSExam("");
     } catch (err) {
       alert("Failed to add student: " + err.message);
     } finally {
@@ -142,24 +178,16 @@ export default function AdminDashboard({ profile, onLogout }) {
 
     setLoading(true);
     try {
-      const result = await createTeacherAsAdmin({ 
-        name: tName.trim(), 
-        email: tEmail.trim(), 
-        exams: tExams 
-      });
+      const result = await createTeacherAsAdmin({ name: tName.trim(), email: tEmail.trim(), exams: tExams });
       setTeacherCredentials(result);
-      setTName("");
-      setTEmail("");
-      setTExams([]);
-      fetchTeachers(); // Refresh the list
+      setTName(""); setTEmail(""); setTExams([]);
+      fetchTeachers(); 
     } catch (err) {
       alert("Failed to create teacher: " + err.message);
     } finally {
       setLoading(false);
     }
   };
-
-  // --- Teacher Management Functions ---
 
   const openEditTeacher = (teacher) => {
     setEditTeacher(teacher);
@@ -183,7 +211,6 @@ export default function AdminDashboard({ profile, onLogout }) {
     if (!window.confirm(`Are you sure you want to permanently remove ${name}'s dashboard access?`)) return;
     setLoading(true);
     try {
-      // By changing the role, the app routing immediately kicks them out
       await updateDoc(doc(db, "users", uid), { role: "revoked" });
       fetchTeachers();
     } catch (err) {
@@ -215,7 +242,7 @@ export default function AdminDashboard({ profile, onLogout }) {
             {/* Bulk Add */}
             <Card>
               <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 8px 0" }}>Bulk Student Enrollment</h2>
-              <p style={{ color: C.textSecondary, fontSize: 14, marginBottom: 16 }}>Upload an Excel file with headers: <strong>Name, Email, Batch, RegNo</strong>.</p>
+              <p style={{ color: C.textSecondary, fontSize: 14, marginBottom: 16 }}>Upload an Excel file with headers: <strong>RegNo, Name, Email, Mobile, BatchNo, Exam</strong>.</p>
               <input type="file" accept=".xlsx, .csv" onChange={handleStudentUpload} disabled={loading} style={{ color: C.textPrimary, marginBottom: 16 }} />
               {studentLogs.length > 0 && (
                 <div style={{ background: "#000", padding: 16, borderRadius: 8, height: 120, overflowY: "auto", fontFamily: font.mono, fontSize: 12, color: C.textMuted }}>
@@ -224,16 +251,28 @@ export default function AdminDashboard({ profile, onLogout }) {
               )}
             </Card>
 
-            {/* Add Single Student */}
+            {/* UPDATED: Add Single Student */}
             <Card>
               <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 16px 0" }}>Add Single Student</h2>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <Input label="Full Name" value={sName} onChange={setSName} placeholder="Student Name" />
                 <Input label="Email" type="email" value={sEmail} onChange={setSEmail} placeholder="student@example.com" />
-                <Input label="Batch" value={sBatch} onChange={setSBatch} placeholder="e.g. CAT-2026" />
                 <Input label="Registration No." value={sRegNo} onChange={setSRegNo} placeholder="e.g. REG-001" />
+                <Input label="Mobile" value={sMobile} onChange={setSMobile} placeholder="e.g. 9876543210" />
+                <Input label="Batch" value={sBatch} onChange={setSBatch} placeholder="e.g. CAT-2026" />
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Exam</label>
+                  <select 
+                    value={sExam} 
+                    onChange={(e) => setSExam(e.target.value)}
+                    style={{ width: "100%", padding: "12px 16px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.body, fontSize: 14, outline: "none", cursor: "pointer" }}
+                  >
+                    <option value="" disabled>-- Select Exam --</option>
+                    {availableExams.map(exam => <option key={exam} value={exam}>{exam}</option>)}
+                  </select>
+                </div>
               </div>
-              <Btn onClick={handleAddSingleStudent} disabled={loading} style={{ marginTop: 16 }}>
+              <Btn onClick={handleAddSingleStudent} disabled={loading} style={{ marginTop: 24 }}>
                 {loading ? "Adding..." : "Add Student"}
               </Btn>
 

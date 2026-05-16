@@ -4,6 +4,8 @@ import AttemptReview from "./AttemptReview";
 import LeaderboardModal from "./LeaderboardModal";
 import { getStudentAttempts } from "../../firebase/attempts";
 import { getStudentTests } from "../../firebase/tests";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../firebase/config";
 
 export default function StudentDashboard({ profile, onStartTest, onLogout }) {
   const [tab, setTab] = useState("tests");
@@ -18,6 +20,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
   const [pinModal, setPinModal] = useState({ open: false, test: null });
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState("");
+  const [pinChecking, setPinChecking] = useState(false); // <-- NEW: Loading state for PIN verification
 
   const fetchDashboardData = async (active = true) => {
     setLoading(true);
@@ -48,17 +51,41 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
       setPinModal({ open: true, test });
       setPinInput("");
       setPinError("");
+      setPinChecking(false);
     } else {
       onStartTest(test);
     }
   };
 
-  const handleConfirmPin = () => {
-    if (pinInput.trim() === pinModal.test.pin) {
-      onStartTest(pinModal.test);
-      setPinModal({ open: false, test: null });
-    } else {
-      setPinError("Incorrect PIN. Please try again.");
+  // <-- UPDATED: Live Server-Side PIN Verification -->
+  const handleConfirmPin = async () => {
+    setPinChecking(true);
+    setPinError("");
+    
+    try {
+      // Fetch the absolute latest test data directly from the database
+      const testRef = doc(db, "tests", pinModal.test.id);
+      const testSnap = await getDoc(testRef);
+      
+      if (!testSnap.exists()) {
+        setPinError("This test no longer exists.");
+        setPinChecking(false);
+        return;
+      }
+
+      const livePin = testSnap.data().pin;
+
+      // Compare the input against the LIVE database PIN, not the local stale one
+      if (pinInput.trim() === livePin) {
+        onStartTest(pinModal.test);
+        setPinModal({ open: false, test: null });
+      } else {
+        setPinError("Incorrect PIN. Please try again.");
+      }
+    } catch (err) {
+      setPinError("Error verifying PIN with server.");
+    } finally {
+      setPinChecking(false);
     }
   };
 
@@ -189,8 +216,12 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
               style={{ fontSize: 20, letterSpacing: 2, textAlign: "center" }}
             />
             <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => setPinModal({ open: false, test: null })}>Cancel</Btn>
-              <Btn variant="primary" onClick={handleConfirmPin}>Unlock Exam</Btn>
+              <Btn variant="ghost" onClick={() => setPinModal({ open: false, test: null })} disabled={pinChecking}>Cancel</Btn>
+              
+              {/* <-- UPDATED: Button uses the loading state --> */}
+              <Btn variant="primary" onClick={handleConfirmPin} disabled={pinChecking}>
+                {pinChecking ? "Verifying..." : "Unlock Exam"}
+              </Btn>
             </div>
           </Card>
         </div>
