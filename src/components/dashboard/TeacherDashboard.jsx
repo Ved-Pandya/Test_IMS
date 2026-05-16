@@ -6,15 +6,18 @@ import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../../firebase/config";
 import TestCreationForm from "./TestCreationForm";
 import TeacherTestDetail from "./TeacherTestDetail";
+import LeaderboardModal from "./LeaderboardModal";
 
 export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [selectedTest, setSelectedTest] = useState(null);
   const [tests, setTests] = useState([]);
   const [allAttempts, setAllAttempts] = useState([]);
   const [selectedAttempts, setSelectedAttempts] = useState([]);
+  
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
+  const [leaderboardModal, setLeaderboardModal] = useState(null);
 
   const [enrollModal, setEnrollModal] = useState({ open: false, testId: null });
   const [enrollMode, setEnrollMode] = useState("batch"); 
@@ -67,8 +70,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const handleCreateTest = async (newTestData) => {
     setCreating(true);
     try {
-      const testId = await createTest(newTestData);
-      // Wait for it to be fully created then refresh the dash
+      await createTest(newTestData);
       await fetchDashboardData(true);
       setCreating(false);
     } catch (err) {
@@ -77,12 +79,10 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
-  // NEW: Generate PIN right from the homepage
   const handleGenerateNewPin = async (test) => {
     if(!window.confirm(`Generate a new PIN for "${test.title}"?\n\nStudents who haven't started will need the new one.`)) return;
     try {
       const newPin = await updateTestPin(test.id);
-      // Immediately update UI
       setTests((current) => current.map(t => t.id === test.id ? { ...t, pin: newPin } : t));
     } catch (err) {
       alert("Failed to update PIN: " + err.message);
@@ -146,6 +146,8 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {tests.length === 0 && <div style={{ textAlign: "center", padding: 40, color: C.textMuted }}>You haven't created any tests yet.</div>}
+          
           {tests.map((test) => {
             const attemptsForTest = allAttempts.filter((attempt) => attempt.testId === test.id);
             return (
@@ -161,7 +163,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                     <span>👥 {test.enrolledStudents.length} enrolled</span>
                     <span>📊 {attemptsForTest.length} attempts</span>
                     
-                    {/* NEW: PIN displayed right on the card */}
                     <div style={{ width: 1, height: 14, background: C.border }} />
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontWeight: 600 }}>Class PIN:</span>
@@ -169,9 +170,10 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                       <button onClick={() => handleGenerateNewPin(test)} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", padding: 0 }} title="Generate New PIN">↻</button>
                     </div>
                   </div>
-
                 </div>
+                
                 <div style={{ display: "flex", gap: 10 }}>
+                  <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 16px" }}>🏆 Leaderboard</Btn>
                   <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 16px" }}>Assign Test</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 16px" }}>View Results</Btn>
                 </div>
@@ -181,6 +183,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         </div>
       </div>
 
+      {/* Assignment/Enrollment Modal */}
       {enrollModal.open && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.8)", display: "grid", placeItems: "center", zIndex: 100 }}>
           <Card style={{ width: 420, maxWidth: "90%", padding: 32 }}>
@@ -202,6 +205,11 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             </div>
           </Card>
         </div>
+      )}
+
+      {/* Leaderboard Modal */}
+      {leaderboardModal && (
+        <LeaderboardModal test={leaderboardModal} onClose={() => setLeaderboardModal(null)} />
       )}
     </div>
   );

@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import AttemptReview from "./AttemptReview";
+import LeaderboardModal from "./LeaderboardModal";
 import { getStudentAttempts } from "../../firebase/attempts";
 import { getStudentTests } from "../../firebase/tests";
 
 export default function StudentDashboard({ profile, onStartTest, onLogout }) {
   const [tab, setTab] = useState("tests");
   const [reviewAttempt, setReviewAttempt] = useState(null);
+  const [leaderboardModal, setLeaderboardModal] = useState(null);
+  
   const [tests, setTests] = useState([]);
   const [attempts, setAttempts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +65,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
   const myAttempts = attempts;
   const attemptedTestIds = new Set(myAttempts.map((attempt) => attempt.testId));
 
-  if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading your tests...</div>;
+  if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading your dashboard...</div>;
   
   if (reviewAttempt) {
     const test = tests.find((item) => item.id === reviewAttempt.testId);
@@ -71,6 +74,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
+      {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60 }}>
         <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 18, color: C.textPrimary }}>📋 ExamPortal</span>
         <div style={{ flex: 1 }} />
@@ -85,6 +89,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
           <Btn variant="ghost" onClick={() => fetchDashboardData(true)}>↻ Refresh Dashboard</Btn>
         </div>
 
+        {/* Stats Row */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 32 }}>
           {[
             ["Tests Enrolled", tests.length, C.accent],
@@ -98,6 +103,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
           ))}
         </div>
 
+        {/* Tabs */}
         <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.border}`, marginBottom: 24 }}>
           {[["tests", "My Tests"], ["history", "Attempt History"]].map(([key, label]) => (
             <button
@@ -109,8 +115,10 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
           ))}
         </div>
 
+        {/* Tab Content: Tests */}
         {tab === "tests" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {tests.length === 0 && <div style={{ textAlign: "center", padding: 40, color: C.textMuted }}>You have no active tests.</div>}
             {tests.map((test) => {
               const attempted = attemptedTestIds.has(test.id);
               const attempt = myAttempts.find((item) => item.testId === test.id);
@@ -128,6 +136,8 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10 }}>
+                    <Btn variant="ghost" onClick={() => setLeaderboardModal(test)}>🏆 Leaderboard</Btn>
+                    
                     {attempted ? (
                       <Btn variant="ghost" onClick={() => setReviewAttempt(attempt)}>Review Answers</Btn>
                     ) : (
@@ -140,6 +150,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
           </div>
         )}
 
+        {/* Tab Content: History */}
         {tab === "history" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {myAttempts.length === 0 && <div style={{ textAlign: "center", padding: 60, color: C.textMuted }}>No attempts yet.</div>}
@@ -163,7 +174,7 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
         )}
       </div>
 
-      {/* NEW: Custom PIN Modal */}
+      {/* Classroom PIN Modal */}
       {pinModal.open && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.8)", display: "grid", placeItems: "center", zIndex: 100 }}>
           <Card style={{ width: 360, maxWidth: "90%", padding: 32 }}>
@@ -183,6 +194,11 @@ export default function StudentDashboard({ profile, onStartTest, onLogout }) {
             </div>
           </Card>
         </div>
+      )}
+
+      {/* Leaderboard Modal */}
+      {leaderboardModal && (
+        <LeaderboardModal test={leaderboardModal} onClose={() => setLeaderboardModal(null)} />
       )}
     </div>
   );
