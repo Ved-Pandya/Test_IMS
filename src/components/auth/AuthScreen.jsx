@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "../../firebase/config";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
 
 export default function AuthScreen({ onLogin }) {
@@ -7,20 +9,56 @@ export default function AuthScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    if(e) e.preventDefault();
     setError("");
-    if (!email || !password) {
+    
+    if (!email.trim() || !password.trim()) {
       setError("Please enter both email and password.");
       return;
     }
 
     setLoading(true);
     try {
-      // The .trim() completely prevents copy-paste spacing errors
-      await onLogin(email.trim(), password.trim());
+      const normalizedEmail = email.trim().toLowerCase();
+      const cleanPassword = password.trim();
+
+      // 1. Target lookup check using the email key directly
+      let userDocRef = doc(db, "users", normalizedEmail);
+      let userSnapshot = await getDoc(userDocRef);
+      let userData = null;
+
+      if (userSnapshot.exists()) {
+        userData = userSnapshot.data();
+      } else {
+        // Fallback secondary matching index logic query pass for backwards-compatibility 
+        const q = query(collection(db, "users"), where("email", "==", normalizedEmail));
+        const querySnap = await getDocs(q);
+        if (!querySnap.empty) {
+          userData = querySnap.docs[0].data();
+        }
+      }
+
+      if (!userData) {
+        throw new Error("No account found matching this Email ID.");
+      }
+
+      // 2. Validate password parameters matching the regNo string constraint rules
+      const storedRegistrationPassword = userData.regNo || userData.passwordCredentialBackup;
+
+      if (!storedRegistrationPassword || String(storedRegistrationPassword).trim() !== cleanPassword) {
+        throw new Error("Invalid password. Please enter your official Registration Number / Employee ID.");
+      }
+
+      if (userData.role === "revoked") {
+        throw new Error("This profile console platform key access parameter is suspended.");
+      }
+
+      // 3. Complete auth handshake transition
+      await onLogin(normalizedEmail, cleanPassword);
+      
     } catch (err) {
-      // This will now show the exact Firebase error (e.g. auth/invalid-credential)
-      setError("Login Failed: " + err.message);
+      setError(err.message || "Login Failed.");
     } finally {
       setLoading(false);
     }
@@ -37,14 +75,14 @@ export default function AuthScreen({ onLogin }) {
 
         <Card>
           <h2 style={{ margin: "0 0 20px 0", fontSize: 18, color: C.textPrimary, textAlign: "center" }}>Sign In</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <Input label="Email Address" type="email" value={email} onChange={setEmail} placeholder="Enter your registered email" />
-            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
+            <Input label="Registration Number / Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
 
-            <Btn onClick={handleSubmit} disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 8, padding: "12px" }}>
+            <Btn type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 8, padding: "12px" }}>
               {loading ? "Authenticating..." : "Secure Login →"}
             </Btn>
-          </div>
+          </form>
         </Card>
       </div>
     </div>

@@ -30,7 +30,6 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
     setSections(newSections);
   };
 
-  // --- SMART TEXT & DOCX TEMPLATE ENGINE WITH LIVE PASSAGE RESET ---
   const handleTemplateUpload = async (event, sectionIndex) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -38,7 +37,6 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
     setIsParsing(true);
     try {
       let rawText = "";
-
       if (file.name.endsWith(".txt")) {
         rawText = await file.text();
       } else if (file.name.endsWith(".docx")) {
@@ -50,14 +48,12 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
       }
       
       const lines = rawText.split("\n").map(line => line.trim()).filter(Boolean);
-      
       const parsedQuestions = [];
       let currentQuestion = null;
       let currentPassage = "";
       let isReadingPassage = false;
 
       for (let line of lines) {
-        // Track Passage Declarations
         if (line === "[PASSAGE]") {
           isReadingPassage = true;
           currentPassage = "";
@@ -65,8 +61,6 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
         }
         if (line === "[END_PASSAGE]") {
           isReadingPassage = false;
-          // Note: We leave currentPassage populated here temporarily so that if a question 
-          // immediately follows, it grabs it. We handle structural cleanup down below.
           continue;
         }
         if (isReadingPassage) {
@@ -74,10 +68,8 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
           continue;
         }
 
-        // Catch Question Foundations
         if (line.startsWith("[Q]")) {
           if (currentQuestion) parsedQuestions.push(currentQuestion);
-          
           currentQuestion = {
             id: Date.now().toString() + Math.random(),
             text: line.replace("[Q]", "").trim(),
@@ -86,16 +78,10 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
             options: ["", "", "", ""],
             correct: 0
           };
-
-          // FIX: If we aren't actively inside a passage block, clear out the text memory 
-          // right after assigning it to this question. This prevents it bleeding into the next standalone item.
-          if (!isReadingPassage) {
-            currentPassage = "";
-          }
+          if (!isReadingPassage) currentPassage = "";
           continue;
         }
 
-        // Process Configuration Attributes
         if (currentQuestion) {
           if (line.startsWith("[TYPE]")) {
             const typeVal = line.replace("[TYPE]", "").trim().toLowerCase();
@@ -122,16 +108,12 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
       }
 
       if (currentQuestion) parsedQuestions.push(currentQuestion);
-
-      if (parsedQuestions.length === 0) {
-        throw new Error("No valid tags found. Check if file matches the requested template rules.");
-      }
+      if (parsedQuestions.length === 0) throw new Error("No valid tags found.");
 
       const newSections = [...sections];
       newSections[sectionIndex].questions.push(...parsedQuestions);
       setSections(newSections);
-      
-      alert(`🎉 Success! Instantly compiled and loaded ${parsedQuestions.length} template questions.`);
+      alert(`🎉 Success! Loaded ${parsedQuestions.length} template questions.`);
     } catch (err) {
       alert("Parsing Failed: " + err.message);
     } finally {
@@ -180,177 +162,104 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body, paddingBottom: 60 }}>
-      {/* Sticky Action Header */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60, position: "sticky", top: 0, zIndex: 10 }}>
+      
+      <style>{`
+        .form-settings-grid-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .form-settings-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+        .form-action-tray { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+        
+        @media (max-width: 600px) {
+          .form-settings-grid-1, .form-settings-grid-2, .form-options-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+          .form-action-tray button, .form-action-tray div { flex: 1 1 100% !important; text-align: center; justify-content: center; width: 100%; }
+          .form-action-tray div button { width: 100% !important; justify-content: center; }
+        }
+      `}</style>
+
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60, position: "sticky", top: 0, zIndex: 10 }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>← Back</button>
         <div style={{ width: 1, height: 24, background: C.border, margin: "0 16px" }} />
-        <span style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 16, color: C.textPrimary }}>Create New Test</span>
+        <span style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 15, color: C.textPrimary }}>New Test Engine</span>
         <div style={{ flex: 1 }} />
-        <Btn onClick={handleSave}>Save & Create Test</Btn>
+        <Btn onClick={handleSave} style={{ padding: "6px 12px", fontSize: 13 }}>Save Test</Btn>
       </div>
 
-      <div style={{ maxWidth: 800, margin: "32px auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 32 }}>
+      <div style={{ maxWidth: 800, margin: "24px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
         
-        {/* Parametric Metadata Block */}
-        <Card>
-          <h2 style={{ fontFamily: font.heading, fontSize: 18, color: C.textPrimary, margin: "0 0 20px" }}>Test Settings</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16 }}>
-            <Input label="Test Title" value={title} onChange={setTitle} placeholder="e.g. CAT Full Length Mock 3" />
-            <Input label="Duration (minutes)" type="number" value={duration} onChange={setDuration} />
+        <Card style={{ padding: 20 }}>
+          <h2 style={{ fontFamily: font.heading, fontSize: 16, color: C.textPrimary, margin: "0 0 16px" }}>Test Settings</h2>
+          <div className="form-settings-grid-1">
+            <Input label="Test Title" value={title} onChange={setTitle} placeholder="e.g. CAT Mock 1" />
+            <Input label="Duration (mins)" type="number" value={duration} onChange={setDuration} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <Input label="Marks for Correct Answer (+)" type="number" value={markCorrect} onChange={setMarkCorrect} />
-            <Input label="Marks for Incorrect Answer (-)" type="number" value={markIncorrect} onChange={setMarkIncorrect} />
+          <div className="form-settings-grid-2">
+            <Input label="Correct (+)" type="number" value={markCorrect} onChange={setMarkCorrect} />
+            <Input label="Incorrect (-)" type="number" value={markIncorrect} onChange={setMarkIncorrect} />
           </div>
         </Card>
 
-        {/* Sections Mapping Loop */}
         {sections.map((section, sIdx) => (
           <div key={section.id} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <Input 
-                value={section.name} 
-                onChange={(val) => {
-                  const newSections = [...sections];
-                  newSections[sIdx].name = val;
-                  setSections(newSections);
-                }} 
-                style={{ fontSize: 18, fontWeight: 700, fontFamily: font.heading, background: "transparent", border: "none", borderBottom: `2px solid ${C.border}`, borderRadius: 0, padding: "8px 0", color: C.textPrimary }}
-              />
-            </div>
+            <Input 
+              value={section.name} 
+              onChange={(val) => {
+                const ns = [...sections]; ns[sIdx].name = val; setSections(ns);
+              }} 
+              style={{ fontSize: 18, fontWeight: 700, background: "transparent", border: "none", borderBottom: `2px solid ${C.border}`, borderRadius: 0, padding: "4px 0", color: C.textPrimary }}
+            />
 
             {section.questions.map((q, qIdx) => (
-              <Card key={q.id} style={{ borderLeft: `4px solid ${C.accent}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                  <div style={{ fontWeight: 700, color: C.textSecondary, fontSize: 13, textTransform: "uppercase", letterSpacing: 1 }}>Question {qIdx + 1}</div>
+              <Card key={q.id} style={{ borderLeft: `4px solid ${C.accent}`, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: C.textSecondary, fontSize: 13 }}>Question {qIdx + 1}</div>
                   <button onClick={() => handleRemoveQuestion(sIdx, qIdx)} style={{ background: "none", border: "none", color: C.redText, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
                 </div>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  <Input label="Question Text" value={q.text} onChange={(val) => updateQuestion(sIdx, qIdx, "text", val)} placeholder="Enter the question contents..." />
-                  
-                  <div>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Passage / Reference Text (Optional)</label>
-                    <textarea 
-                      value={q.passage} 
-                      onChange={(e) => updateQuestion(sIdx, qIdx, "passage", e.target.value)}
-                      placeholder="Paste Reading Comprehension reference passage contextual blocks directly here..."
-                      style={{ width: "100%", minHeight: 100, padding: 12, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.textPrimary, fontFamily: font.body, fontSize: 14, resize: "vertical" }}
-                    />
-                  </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Input label="Question Text" value={q.text} onChange={(val) => updateQuestion(sIdx, qIdx, "text", val)} />
+                  <textarea 
+                    value={q.passage} onChange={(e) => updateQuestion(sIdx, qIdx, "passage", e.target.value)}
+                    placeholder="Reference Passage (Optional)..."
+                    style={{ width: "100%", minHeight: 80, padding: 12, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.textPrimary, fontSize: 14 }}
+                  />
 
-                  <div style={{ padding: 16, background: C.bg, borderRadius: 8, border: `1px solid ${C.border}` }}>
-                    <div style={{ marginBottom: 16 }}>
-                      <label style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Question Type</label>
-                      <select 
-                        value={q.type} 
-                        onChange={(e) => updateQuestion(sIdx, qIdx, "type", e.target.value)}
-                        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.textPrimary, fontSize: 14, outline: "none", cursor: "pointer" }}
-                      >
-                        <option value="mcq">Multiple Choice (MCQ)</option>
-                        <option value="tita">Type in the Answer (TITA)</option>
-                      </select>
-                    </div>
+                  <div style={{ padding: 14, background: C.bg, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                    <select value={q.type} onChange={(e) => updateQuestion(sIdx, qIdx, "type", e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, background: C.surface, color: C.textPrimary, border: `1px solid ${C.border}`, marginBottom: 14 }}>
+                      <option value="mcq">Multiple Choice (MCQ)</option>
+                      <option value="tita">Type in the Answer (TITA)</option>
+                    </select>
 
                     {q.type === 'mcq' ? (
                       <>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                        <div className="form-options-grid">
                           {q.options?.map((opt, optIdx) => (
-                            <Input 
-                              key={optIdx} 
-                              label={`Option ${String.fromCharCode(65 + optIdx)}`} 
-                              value={opt} 
-                              onChange={(val) => updateOption(sIdx, qIdx, optIdx, val)} 
-                            />
+                            <Input key={optIdx} label={`Option ${String.fromCharCode(65 + optIdx)}`} value={opt} onChange={(val) => updateOption(sIdx, qIdx, optIdx, val)} />
                           ))}
                         </div>
-                        <div>
-                          <label style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Correct Option</label>
-                          <select 
-                            value={q.correct} 
-                            onChange={(e) => updateQuestion(sIdx, qIdx, "correct", Number(e.target.value))}
-                            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.textPrimary, fontSize: 14, outline: "none", cursor: "pointer" }}
-                          >
-                            {q.options?.map((_, idx) => (
-                              <option key={idx} value={idx}>Option {String.fromCharCode(65 + idx)}</option>
-                            ))}
-                          </select>
-                        </div>
+                        <select value={q.correct} onChange={(e) => updateQuestion(sIdx, qIdx, "correct", Number(e.target.value))} style={{ width: "100%", padding: 10, borderRadius: 8, background: C.surface, color: C.textPrimary, border: `1px solid ${C.border}` }}>
+                          {q.options?.map((_, idx) => <option key={idx} value={idx}>Option {String.fromCharCode(65 + idx)}</option>)}
+                        </select>
                       </>
                     ) : (
-                      <div>
-                        <Input 
-                          label="Exact Evaluation Target String Value" 
-                          value={q.correct} 
-                          onChange={(val) => updateQuestion(sIdx, qIdx, "correct", val)} 
-                          placeholder="e.g. 24 or India" 
-                        />
-                      </div>
+                      <Input label="Correct Value String" value={q.correct} onChange={(val) => updateQuestion(sIdx, qIdx, "correct", val)} placeholder="e.g. 42" />
                     )}
                   </div>
                 </div>
               </Card>
             ))}
 
-            {/* Action Controller Tray */}
-            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 8 }}>
-              <Btn variant="ghost" onClick={() => handleAddQuestion(sIdx)} style={{ border: `1px dashed ${C.border}` }}>
-                + Add Question Manually
-              </Btn>
-              
+            <div className="form-action-tray">
+              <Btn variant="ghost" onClick={() => handleAddQuestion(sIdx)} style={{ border: `1px dashed ${C.border}` }}>+ Add Question</Btn>
               <div style={{ position: "relative", overflow: "hidden", display: "inline-block" }}>
-                <Btn variant="primary" disabled={isParsing} style={{ background: C.green, color: "#fff" }}>
-                  {isParsing ? "Extracting..." : "📄 Upload Template (.docx / .txt)"}
-                </Btn>
-                <input 
-                  type="file" 
-                  accept=".docx,.txt"
-                  onChange={(e) => handleTemplateUpload(e, sIdx)}
-                  disabled={isParsing}
-                  style={{ position: "absolute", top: 0, left: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
-                />
+                <Btn variant="primary" disabled={isParsing} style={{ background: C.green, color: "#fff" }}>{isParsing ? "Parsing..." : "📄 Upload Template"}</Btn>
+                <input type="file" accept=".docx,.txt" onChange={(e) => handleTemplateUpload(e, sIdx)} disabled={isParsing} style={{ position: "absolute", top: 0, left: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }} />
               </div>
-
-              <Btn 
-                variant="ghost" 
-                onClick={() => {
-                  const templateText = 
-`[PASSAGE]
-In the heart of Western Europe, France has historically played a central role in global politics and culture. Its capital city is known worldwide for art, fashion, and gastronomy.
-[END_PASSAGE]
-
-[Q] What is the capital of France?
-[TYPE] MCQ
-[A] London
-[B] Berlin
-[C] Paris
-[D] Madrid
-[ANS] C
-
-[Q] Find the value of x if 2x + 5 = 15.
-[TYPE] TITA
-[ANS] 5`;
-
-                  const blob = new Blob([templateText], { type: "text/plain;charset=utf-8" });
-                  const link = document.createElement("a");
-                  link.href = URL.createObjectURL(blob);
-                  link.download = "ExamPortal_Template_Sample.txt";
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                style={{ color: C.textSecondary, border: `1px solid ${C.border}` }}
-              >
-                📥 Download Sample Template (.txt)
-              </Btn>
             </div>
 
           </div>
         ))}
 
-        <Btn variant="primary" onClick={handleAddSection} style={{ alignSelf: "center", padding: "12px 24px" }}>
-          + Add New Section
-        </Btn>
+        <Btn variant="primary" onClick={handleAddSection} style={{ alignSelf: "center", padding: "10px 20px" }}>+ Add Section</Btn>
       </div>
     </div>
   );

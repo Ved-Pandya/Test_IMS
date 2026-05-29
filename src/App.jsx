@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "./hooks/useAuth";
 import { login, logout } from "./firebase/auth";
 import AuthScreen from "./components/auth/AuthScreen";
@@ -7,15 +7,64 @@ import TeacherDashboard from "./components/dashboard/TeacherDashboard";
 import AdminDashboard from "./components/dashboard/AdminDashboard";
 import ExamView from "./components/exam/ExamView";
 import AttemptReview from "./components/dashboard/AttemptReview";
-import { collection, addDoc } from "firebase/firestore";
+import { collection, addDoc, doc, getDoc } from "firebase/firestore";
 import { db } from "./firebase/config";
 
 export default function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile: initialProfile, loading: authLoading } = useAuth();
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  
   const [view, setView] = useState("dashboard");
   const [activeTest, setActiveTest] = useState(null);
   const [submittedAttempt, setSubmittedAttempt] = useState(null);
   const [previewMode, setPreviewMode] = useState(false);
+
+  // --- ENGINE COMPATIBILITY SYNCHRONIZER LAYER ---
+  useEffect(() => {
+    async function synchronizeUserProfile() {
+      if (!user) {
+        setProfile(null);
+        return;
+      }
+      
+      setProfileLoading(true);
+      try {
+        // 1. Try structural lookup using the email identification key directly
+        const emailKey = user.email?.toLowerCase().trim();
+        if (emailKey) {
+          const emailSnap = await getDoc(doc(db, "users", emailKey));
+          if (emailSnap.exists()) {
+            setProfile(emailSnap.data());
+            return;
+          }
+        }
+
+        // 2. Fallback lookup using standard user.uid
+        const uidSnap = await getDoc(doc(db, "users", user.uid));
+        if (uidSnap.exists()) {
+          setProfile(uidSnap.data());
+          return;
+        }
+
+        // 3. Last fallback: Preserve initial wrapper data profile if database keys are unpopulated
+        if (initialProfile) {
+          setProfile(initialProfile);
+        } else {
+          setProfile({ name: user.email?.split("@")[0] || "User", role: "student", uid: user.uid });
+        }
+      } catch (err) {
+        console.error("Profile synchronization loop exception:", err);
+        setProfile(initialProfile || { name: "User", role: "student", uid: user.uid });
+      } finally {
+        setProfileLoading(false);
+      }
+    }
+
+    synchronizeUserProfile();
+  }, [user, initialProfile]);
+
+  const loading = authLoading || profileLoading;
 
   if (loading) {
     return (
@@ -33,14 +82,14 @@ export default function App() {
       >
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Exam Portal</div>
-          <div style={{ color: "#8892a8" }}>Loading authentication state…</div>
+          <div style={{ color: "#8892a8" }}>Synchronizing secure profile parameters…</div>
         </div>
       </div>
     );
   }
 
-  // If no user is logged in, show the pure Login screen (no registration)
-  if (!user) {
+  // If no user is logged in, show the clean login interface
+  if (!user || !profile) {
     return <AuthScreen onLogin={login} />; 
   }
 
@@ -65,7 +114,6 @@ export default function App() {
       setView("review");
     } else {
       try {
-        // Save the live student results to production Firestore
         const docRef = await addDoc(collection(db, "attempts"), attemptPayload);
         const attemptWithId = { id: docRef.id, ...attemptPayload };
         setSubmittedAttempt(attemptWithId);
@@ -81,7 +129,7 @@ export default function App() {
       <ExamView
         test={activeTest}
         studentProfile={{
-          uid: previewMode ? "demo-student" : user.uid,
+          uid: previewMode ? "demo-student" : (profile.email || user.uid),
           name: previewMode ? `${profile?.name || "Teacher"} (Preview Mode)` : profile?.name || "Student"
         }}
         onSubmitExam={handleExamSubmitPipeline}
@@ -93,12 +141,12 @@ export default function App() {
     return <AttemptReview attempt={submittedAttempt} test={activeTest} onBack={resetSession} />;
   }
 
-  // Routing based on the user's role
-  if (profile?.role === "admin") {
+  // --- DYNAMIC DASHBOARD PORTAL ROUTER ---
+  if (profile.role === "admin") {
     return <AdminDashboard profile={profile} onLogout={logout} />;
   }
 
-  if (profile?.role === "teacher") {
+  if (profile.role === "teacher") {
     return (
       <TeacherDashboard 
         profile={profile} 

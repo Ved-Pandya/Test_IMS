@@ -1,236 +1,230 @@
 import { useEffect, useState } from "react";
-import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
-import AttemptReview from "./AttemptReview";
-import LeaderboardModal from "./LeaderboardModal";
-import { getStudentAttempts } from "../../firebase/attempts";
+import { Badge, Btn, Card, C, font } from "../ui/Primitives";
 import { getStudentTests } from "../../firebase/tests";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../../firebase/config";
+import { getStudentAttempts } from "../../firebase/attempts";
 
-export default function StudentDashboard({ profile, onStartTest, onLogout }) {
-  const [tab, setTab] = useState("tests");
-  const [reviewAttempt, setReviewAttempt] = useState(null);
-  const [leaderboardModal, setLeaderboardModal] = useState(null);
-  
+export default function StudentDashboard({ profile, onLogout, onStartTest }) {
   const [tests, setTests] = useState([]);
   const [attempts, setAttempts] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Custom Modal State for PIN
-  const [pinModal, setPinModal] = useState({ open: false, test: null });
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState("");
-  const [pinChecking, setPinChecking] = useState(false); // <-- NEW: Loading state for PIN verification
-
-  const fetchDashboardData = async (active = true) => {
-    setLoading(true);
-    try {
-      const [loadedTests, loadedAttempts] = await Promise.all([
-        getStudentTests(profile.uid), 
-        getStudentAttempts(profile.uid)
-      ]);
-      if (!active) return;
-      setTests(loadedTests);
-      setAttempts(loadedAttempts);
-    } catch (err) {
-      if (!active) return;
-      console.error(err);
-    } finally {
-      if (active) setLoading(false);
-    }
-  };
+  const [activeTab, setActiveTab] = useState("my-tests"); // "my-tests" or "history"
 
   useEffect(() => {
-    let active = true;
-    fetchDashboardData(active);
-    return () => { active = false; };
+    async function loadStudentData() {
+      try {
+        const [enrolledTests, pastAttempts] = await Promise.all([
+          getStudentTests(profile.uid),
+          getStudentAttempts(profile.uid)
+        ]);
+        setTests(enrolledTests);
+        setAttempts(pastAttempts);
+      } catch (err) {
+        console.error("Error loading dashboard data:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStudentData();
   }, [profile.uid]);
 
-  const handleStartTestClick = (test) => {
-    if (test.pin) {
-      setPinModal({ open: true, test });
-      setPinInput("");
-      setPinError("");
-      setPinChecking(false);
-    } else {
-      onStartTest(test);
-    }
+  const calculateAverageScore = () => {
+    if (attempts.length === 0) return "0%";
+    const totalPercentage = attempts.reduce((acc, curr) => {
+      const percentage = curr.total > 0 ? (curr.score / curr.total) * 100 : 0;
+      return acc + percentage;
+    }, 0);
+    return `${Math.round(totalPercentage / attempts.length)}%`;
   };
 
-  // <-- UPDATED: Live Server-Side PIN Verification -->
-  const handleConfirmPin = async () => {
-    setPinChecking(true);
-    setPinError("");
-    
-    try {
-      // Fetch the absolute latest test data directly from the database
-      const testRef = doc(db, "tests", pinModal.test.id);
-      const testSnap = await getDoc(testRef);
-      
-      if (!testSnap.exists()) {
-        setPinError("This test no longer exists.");
-        setPinChecking(false);
-        return;
-      }
-
-      const livePin = testSnap.data().pin;
-
-      // Compare the input against the LIVE database PIN, not the local stale one
-      if (pinInput.trim() === livePin) {
-        onStartTest(pinModal.test);
-        setPinModal({ open: false, test: null });
-      } else {
-        setPinError("Incorrect PIN. Please try again.");
-      }
-    } catch (err) {
-      setPinError("Error verifying PIN with server.");
-    } finally {
-      setPinChecking(false);
-    }
-  };
-
-  const myAttempts = attempts;
-  const attemptedTestIds = new Set(myAttempts.map((attempt) => attempt.testId));
-
-  if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading your dashboard...</div>;
-  
-  if (reviewAttempt) {
-    const test = tests.find((item) => item.id === reviewAttempt.testId);
-    return <AttemptReview attempt={reviewAttempt} test={test} onBack={() => { setReviewAttempt(null); fetchDashboardData(); }} />;
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>
+        Loading Student Dashboard...
+      </div>
+    );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
-      {/* Header */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60 }}>
-        <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 18, color: C.textPrimary }}>📋 ExamPortal</span>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body, paddingBottom: 40 }}>
+      
+      {/* Dynamic Responsive Styles Injection */}
+      <style>{`
+        .student-metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 20px;
+          margin-bottom: 32px;
+        }
+        .student-test-card {
+          display: flex;
+          align-items: center;
+          gap: 24px;
+          padding: 24px 28px;
+        }
+        .student-card-actions {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          justify-content: flex-end;
+        }
+
+        @media (max-width: 600px) {
+          .student-metrics-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+            margin-bottom: 24px !important;
+          }
+          .student-test-card {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 16px !important;
+            padding: 20px !important;
+          }
+          .student-card-actions {
+            width: 100% !important;
+            justify-content: flex-start !important;
+            border-top: 1px solid ${C.border};
+            padding-top: 14px;
+          }
+          .student-card-actions button, .student-card-actions a {
+            flex: 1 !important;
+            text-align: center;
+            justify-content: center;
+          }
+        }
+      `}</style>
+
+      {/* Navigation Header */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60 }}>
+        <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 16, color: C.textPrimary }}>🎓 Student Portal</span>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span style={{ fontSize: 14, color: C.textSecondary }}>{profile.name}</span>
-          <Btn variant="ghost" onClick={onLogout} style={{ padding: "7px 14px", fontSize: 13 }}>Sign out</Btn>
-        </div>
+        <span style={{ fontSize: 13, color: C.textMuted, marginRight: 16, display: "inline-block" }}>{profile.name}</span>
+        <Btn variant="ghost" onClick={onLogout} style={{ padding: "6px 12px", fontSize: 13 }}>Sign out</Btn>
       </div>
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "36px 24px" }}>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-          <Btn variant="ghost" onClick={() => fetchDashboardData(true)}>↻ Refresh Dashboard</Btn>
-        </div>
-
-        {/* Stats Row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 32 }}>
-          {[
-            ["Tests Enrolled", tests.length, C.accent],
-            ["Completed", myAttempts.length, C.green],
-            ["Avg Score", myAttempts.length ? Math.round(myAttempts.reduce((sum, item) => sum + (item.score / item.total) * 100, 0) / myAttempts.length) + "%" : "—", C.amber],
-          ].map(([label, value, color]) => (
-            <Card key={label} style={{ padding: "18px 22px" }}>
-              <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8 }}>{label}</div>
-              <div style={{ fontSize: 28, fontWeight: 800, fontFamily: font.heading, color }}>{value}</div>
-            </Card>
-          ))}
-        </div>
-
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.border}`, marginBottom: 24 }}>
-          {[["tests", "My Tests"], ["history", "Attempt History"]].map(([key, label]) => (
-            <button
-              key={key} onClick={() => setTab(key)}
-              style={{ padding: "10px 22px", background: "none", border: "none", borderBottom: `2px solid ${tab === key ? C.accent : "transparent"}`, color: tab === key ? C.textPrimary : C.textMuted, fontWeight: tab === key ? 600 : 400, fontSize: 14, cursor: "pointer", fontFamily: font.body }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab Content: Tests */}
-        {tab === "tests" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {tests.length === 0 && <div style={{ textAlign: "center", padding: 40, color: C.textMuted }}>You have no active tests.</div>}
-            {tests.map((test) => {
-              const attempted = attemptedTestIds.has(test.id);
-              const attempt = myAttempts.find((item) => item.testId === test.id);
-              const totalQ = test.sections.flatMap((section) => section.questions).length;
-              return (
-                <Card key={test.id} style={{ display: "flex", alignItems: "center", gap: 20 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                      <span style={{ fontFamily: font.heading, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
-                      {attempted ? <Badge color="green">Completed</Badge> : <Badge color="accent">Not Attempted</Badge>}
-                    </div>
-                    <div style={{ fontSize: 13, color: C.textMuted, display: "flex", gap: 18 }}>
-                      <span>⏱ {test.duration} min</span>
-                      <span>📝 {totalQ} questions</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <Btn variant="ghost" onClick={() => setLeaderboardModal(test)}>🏆 Leaderboard</Btn>
-                    
-                    {attempted ? (
-                      <Btn variant="ghost" onClick={() => setReviewAttempt(attempt)}>Review Answers</Btn>
-                    ) : (
-                      <Btn onClick={() => handleStartTestClick(test)}>Start Test →</Btn>
-                    )}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Tab Content: History */}
-        {tab === "history" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {myAttempts.length === 0 && <div style={{ textAlign: "center", padding: 60, color: C.textMuted }}>No attempts yet.</div>}
-            {myAttempts.map((attempt) => {
-              const test = tests.find((item) => item.id === attempt.testId);
-              const pct = Math.round((attempt.score / attempt.total) * 100);
-              return (
-                <Card key={attempt.id}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 15, color: C.textPrimary }}>{test?.title || "Unknown Test"}</div>
-                      <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>Score: {attempt.score}/{attempt.total} ({pct}%)</div>
-                      <div style={{ marginTop: 8, fontSize: 12, color: attempt.reason.includes("Auto") ? C.redText : C.textMuted }}>Submitted: {attempt.reason}</div>
-                    </div>
-                    <Btn variant="ghost" onClick={() => setReviewAttempt(attempt)} style={{ fontSize: 13 }}>Review →</Btn>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Classroom PIN Modal */}
-      {pinModal.open && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.8)", display: "grid", placeItems: "center", zIndex: 100 }}>
-          <Card style={{ width: 360, maxWidth: "90%", padding: 32 }}>
-            <h2 style={{ fontFamily: font.heading, fontSize: 18, margin: "0 0 16px", color: C.textPrimary }}>Enter Classroom PIN</h2>
-            <p style={{ color: C.textSecondary, fontSize: 14, marginBottom: 20 }}>This is a supervised exam. Please enter the 4-digit PIN provided by your teacher.</p>
-            <Input 
-              type="text" 
-              value={pinInput} 
-              onChange={setPinInput} 
-              placeholder="e.g. 1234" 
-              error={pinError} 
-              style={{ fontSize: 20, letterSpacing: 2, textAlign: "center" }}
-            />
-            <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => setPinModal({ open: false, test: null })} disabled={pinChecking}>Cancel</Btn>
-              
-              {/* <-- UPDATED: Button uses the loading state --> */}
-              <Btn variant="primary" onClick={handleConfirmPin} disabled={pinChecking}>
-                {pinChecking ? "Verifying..." : "Unlock Exam"}
-              </Btn>
-            </div>
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
+        
+        {/* 1. TOP METRICS TRACKING GRID */}
+        <div className="student-metrics-grid">
+          <Card style={{ padding: 20, textAlign: "left" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", marginBottom: 6 }}>Tests Enrolled</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.accentText }}>{tests.length}</div>
+          </Card>
+          
+          <Card style={{ padding: 20, textAlign: "left" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", marginBottom: 6 }}>Completed</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.greenText }}>{attempts.length}</div>
+          </Card>
+          
+          <Card style={{ padding: 20, textAlign: "left" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", marginBottom: 6 }}>Avg Score</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.amberText }}>{calculateAverageScore()}</div>
           </Card>
         </div>
-      )}
 
-      {/* Leaderboard Modal */}
-      {leaderboardModal && (
-        <LeaderboardModal test={leaderboardModal} onClose={() => setLeaderboardModal(null)} />
-      )}
+        {/* 2. SUB-TAB TOGGLES CONTAINER */}
+        <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${C.border}`, marginBottom: 20, paddingLeft: 8 }}>
+          <button 
+            onClick={() => setActiveTab("my-tests")}
+            style={{
+              background: "none", border: "none", padding: "12px 4px", fontSize: 15, fontWeight: 700,
+              color: activeTab === "my-tests" ? C.textPrimary : C.textMuted,
+              borderBottom: `3px solid ${activeTab === "my-tests" ? C.accent : "transparent"}`,
+              cursor: "pointer"
+            }}
+          >
+            My Tests
+          </button>
+          <button 
+            onClick={() => setActiveTab("history")}
+            style={{
+              background: "none", border: "none", padding: "12px 4px", fontSize: 15, fontWeight: 700,
+              color: activeTab === "history" ? C.textPrimary : C.textMuted,
+              borderBottom: `3px solid ${activeTab === "history" ? C.accent : "transparent"}`,
+              cursor: "pointer"
+            }}
+          >
+            Attempt History
+          </button>
+        </div>
+
+        {/* 3. SUB-VIEW CONDITIONAL RENDER WORKFLOW */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {activeTab === "my-tests" ? (
+            <>
+              {tests.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: C.textMuted }}>No tests assigned to your batch yet.</div>
+              )}
+              
+              {tests.map((test) => {
+                const pastAttempt = attempts.find(a => a.testId === test.id);
+                return (
+                  <Card key={test.id} className="student-test-card">
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: font.heading, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
+                        {pastAttempt ? (
+                          <Badge color="green">Completed</Badge>
+                        ) : (
+                          <Badge color={test.isActive ? "accent" : "gray"}>{test.isActive ? "Available" : "Locked"}</Badge>
+                        )}
+                      </div>
+                      
+                      <div style={{ fontSize: 13, color: C.textMuted, display: "flex", gap: 14, alignItems: "center" }}>
+                        <span>⏱ {test.duration} min</span>
+                        <span>📝 {test.sections?.reduce((acc, s) => acc + s.questions.length, 0) || 0} questions</span>
+                      </div>
+                    </div>
+
+                    <div className="student-card-actions">
+                      {pastAttempt ? (
+                        <Btn variant="ghost" disabled style={{ opacity: 0.6, fontSize: 13, padding: "8px 16px" }}>Submitted</Btn>
+                      ) : (
+                        <Btn 
+                          variant="primary" 
+                          disabled={!test.isActive}
+                          onClick={() => onStartTest(test)} 
+                          style={{ fontSize: 13, padding: "8px 16px" }}
+                        >
+                          Start Test →
+                        </Btn>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              {attempts.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: C.textMuted }}>You haven't completed any tests yet.</div>
+              )}
+              
+              {attempts.map((attempt) => {
+                const percentage = attempt.total > 0 ? Math.round((attempt.score / attempt.total) * 100) : 0;
+                return (
+                  <Card key={attempt.id} className="student-test-card">
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontFamily: font.heading, fontSize: 16, fontWeight: 700, color: C.textPrimary, display: "block", marginBottom: 6 }}>{attempt.testTitle}</span>
+                      <div style={{ fontSize: 13, color: C.textMuted, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                        <span>Score: <strong style={{ color: C.textPrimary }}>{attempt.score}/{attempt.total}</strong></span>
+                        <span>Accuracy: <strong style={{ color: C.textPrimary }}>{percentage}%</strong></span>
+                        <span>Taken: {Math.round(attempt.timeTaken / 60)} min</span>
+                      </div>
+                    </div>
+                    <div className="student-card-actions">
+                      <Badge color={percentage >= 50 ? "green" : "red"} style={{ padding: "8px 14px", fontSize: 13 }}>
+                        {percentage}% Score
+                      </Badge>
+                    </div>
+                  </Card>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }

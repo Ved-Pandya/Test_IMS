@@ -12,7 +12,7 @@ export default function AdminDashboard({ profile, onLogout }) {
   // Bulk Upload State
   const [studentLogs, setStudentLogs] = useState([]);
 
-  // UPDATED: Single Student State (Added Mobile and Exam)
+  // Single Student State
   const [sName, setSName] = useState("");
   const [sEmail, setSEmail] = useState("");
   const [sBatch, setSBatch] = useState("");
@@ -38,7 +38,6 @@ export default function AdminDashboard({ profile, onLogout }) {
 
   const availableExams = ["CAT", "CMAT", "CLAT", "IPMAT", "GMAT", "BANK-PO"];
 
-  // Fetch teachers when switching to the teachers tab
   useEffect(() => {
     if (tab === "teachers") fetchTeachers();
   }, [tab]);
@@ -57,13 +56,13 @@ export default function AdminDashboard({ profile, onLogout }) {
     setTExams(prev => prev.includes(exam) ? prev.filter(e => e !== exam) : [...prev, exam]);
   };
 
-  // --- BULK ENROLLMENT PARSER ---
+  // --- REFACTORED BULK ENROLLMENT PARSER WITH HIGH TOLERANCE NORMALIZATION ---
   const handleStudentUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setLoading(true);
-    setStudentLogs(["Reading file..."]);
+    setStudentLogs(["Reading excel workbook matrix file..."]);
 
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -72,24 +71,37 @@ export default function AdminDashboard({ profile, onLogout }) {
         const workbook = XLSX.read(data, { type: "array" });
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
 
-        setStudentLogs(prev => [...prev, `Found ${rows.length} students. Starting creation...`]);
+        setStudentLogs(prev => [...prev, `Found ${rows.length} rows. Sanitizing structural fields...`]);
         const results = [];
 
         for (let row of rows) {
-          const regNo = String(row["RegNo"] || row["reg no"] || row["Registration No"] || "").trim();
-          const name = String(row["Name"] || row["name"] || "").trim();
-          const email = String(row["Email"] || row["email"] || "").trim().toLowerCase();
-          const mobile = String(row["Mobile"] || row["mobile"] || "").trim();
-          const batch = String(row["BatchNo"] || row["batch no"] || row["Batch"] || "").trim();
-          const exam = String(row["Exam"] || row["exam"] || "").trim();
+          // Fallback selectors catch column name variants regardless of space or case mutations
+          const rawEmail = row.Email || row.email || row["EMAIL"] || row["Email ID"] || row["E-mail"];
+          const rawName = row.Name || row.name || row["NAME"] || row["Student Name"];
+          const rawRegNo = row.RegNo || row.regNo || row["RegNo "] || row["Registration No"] || row["Registration Number"] || row["RegistrationNo"];
+          const rawMobile = row.Mobile || row.mobile || row["MobileNo"] || row["Mobile Number"];
+          const rawBatch = row.BatchNo || row.batchNo || row.Batch || row["Batch No"] || row["BatchNo "];
+          const rawExam = row.Exam || row.exam || row["EXAM"];
 
-          if (!email || !name) {
-            setStudentLogs(prev => [...prev, `⚠️ Skipped row: Missing Name or Email`]);
+          const email = String(rawEmail || "").trim().toLowerCase();
+          const name = String(rawName || "").trim();
+          const regNo = String(rawRegNo || "").trim();
+          const mobile = String(rawMobile || "").trim();
+          const batch = String(rawBatch || "").trim();
+          const exam = String(rawExam || "").trim();
+
+          if (!email || email === "undefined" || !name || name === "undefined") {
+            setStudentLogs(prev => [...prev, `⚠️ Skipped line row segment: Missing operational Name or Email keys.`]);
+            continue;
+          }
+
+          if (!regNo || regNo === "undefined") {
+            setStudentLogs(prev => [...prev, `⚠️ Skipped ${email}: Registration Number configuration column cell is empty.`]);
             continue;
           }
 
           try {
-            const result = await createStudentAsAdmin({ 
+            await createStudentAsAdmin({ 
               name, email, batch, regNo, mobile, exam
             });
             
@@ -97,20 +109,20 @@ export default function AdminDashboard({ profile, onLogout }) {
               "Registration No": regNo,
               "Name": name,
               "Email": email,
-              "Password": result.password || "Generated",
+              "Password": regNo, 
               "Mobile": mobile,
               "Batch": batch,
               "Exam": exam,
               "Status": "Success"
             });
-            setStudentLogs(prev => [...prev, `✅ Created: ${email}`]);
+            setStudentLogs(prev => [...prev, `✅ Provisioned Enrollee Document: ${email}`]);
           } catch (err) {
             results.push({
               "Registration No": regNo, "Name": name, "Email": email,
               "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
               "Status": `Error: ${err.message}`
             });
-            setStudentLogs(prev => [...prev, `❌ Failed ${email}: ${err.message}`]);
+            setStudentLogs(prev => [...prev, `❌ Compilation Drop ${email}: ${err.message}`]);
           }
         }
 
@@ -118,9 +130,9 @@ export default function AdminDashboard({ profile, onLogout }) {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, worksheet, "Credentials");
         XLSX.writeFile(wb, "Student_Login_Credentials.xlsx");
-        setStudentLogs(prev => [...prev, "🎉 Finished! Credentials spreadsheet downloaded."]);
+        setStudentLogs(prev => [...prev, "🎉 Operational complete! Credentials workbook spreadsheet downloaded."]);
       } catch (err) {
-        setStudentLogs(prev => [...prev, `Critical Error: ${err.message}`]);
+        setStudentLogs(prev => [...prev, `Critical Core Parse Exception Error: ${err.message}`]);
       } finally {
         setLoading(false);
         e.target.value = ""; 
@@ -129,40 +141,40 @@ export default function AdminDashboard({ profile, onLogout }) {
     reader.readAsArrayBuffer(file);
   };
 
-  // --- UPDATED: ADD SINGLE STUDENT ---
+  // --- INDIVIDUAL ACCOUNT PROVISIONS ---
   const handleAddSingleStudent = async () => {
     if (!sName || !sEmail || !sBatch || !sRegNo || !sMobile || !sExam) {
-      return alert("All fields are required for a single student.");
+      return alert("All fields are strictly mandatory for processing individual enrollees.");
     }
     
     setLoading(true);
     try {
-      const result = await createStudentAsAdmin({ 
+      await createStudentAsAdmin({ 
         name: sName.trim(), 
-        email: sEmail.trim(), 
+        email: sEmail.trim().toLowerCase(), 
         batch: sBatch.trim(), 
-        regNo: sRegNo.trim(),
+        regNo: sRegNo.trim(), 
         mobile: sMobile.trim(),
         exam: sExam.trim()
       });
-      setSingleStudentCreds(result);
       
-      // Clear all fields on success
+      setSingleStudentCreds({ email: sEmail.trim().toLowerCase(), password: sRegNo.trim() });
+      
       setSName(""); setSEmail(""); setSBatch(""); 
       setSRegNo(""); setSMobile(""); setSExam("");
     } catch (err) {
-      alert("Failed to add student: " + err.message);
+      alert("Failed to provision student record profile: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleUpdateBatch = async () => {
-    if (!uEmail || !uBatch) return alert("Email and new batch are required.");
+    if (!uEmail || !uBatch) return alert("Email and destination batch properties target string required.");
     setLoading(true);
     try {
-      const studentName = await updateStudentBatchByEmail(uEmail.trim(), uBatch.trim());
-      alert(`Success! Moved ${studentName} to batch: ${uBatch.trim()}`);
+      const studentName = await updateStudentBatchByEmail(uEmail.trim().toLowerCase(), uBatch.trim());
+      alert(`Success! Relocated ${studentName} to batch track sequence: ${uBatch.trim()}`);
       setUEmail("");
       setUBatch("");
     } catch (err) {
@@ -173,17 +185,21 @@ export default function AdminDashboard({ profile, onLogout }) {
   };
 
   const handleCreateTeacher = async () => {
-    if (!tName || !tEmail) return alert("Name and Email are required.");
-    if (tExams.length === 0) return alert("Please assign at least one exam to this teacher.");
+    if (!tName || !tEmail) return alert("Name and identity routing email properties are mandatory parameters.");
+    if (tExams.length === 0) return alert("Assign at least one core exam pipeline tracker category to this instructor account.");
 
     setLoading(true);
     try {
-      const result = await createTeacherAsAdmin({ name: tName.trim(), email: tEmail.trim(), exams: tExams });
+      const result = await createTeacherAsAdmin({ 
+        name: tName.trim(), 
+        email: tEmail.trim().toLowerCase(), 
+        exams: tExams 
+      });
       setTeacherCredentials(result);
       setTName(""); setTEmail(""); setTExams([]);
       fetchTeachers(); 
     } catch (err) {
-      alert("Failed to create teacher: " + err.message);
+      alert("Failed to create teacher account profile data nodes: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -197,124 +213,148 @@ export default function AdminDashboard({ profile, onLogout }) {
   const saveTeacherExams = async () => {
     setLoading(true);
     try {
-      await updateDoc(doc(db, "users", editTeacher.uid), { exams: editExams });
+      await updateDoc(doc(db, "users", editTeacher.id), { exams: editExams });
       setEditTeacher(null);
       fetchTeachers();
     } catch (err) {
-      alert("Failed to update exams: " + err.message);
+      alert("Failed to update exams array reference data points: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleRemoveTeacher = async (uid, name) => {
-    if (!window.confirm(`Are you sure you want to permanently remove ${name}'s dashboard access?`)) return;
+    if (!window.confirm(`Are you absolutely sure you want to permanently strip operational console access keys from ${name}?`)) return;
     setLoading(true);
     try {
       await updateDoc(doc(db, "users", uid), { role: "revoked" });
       fetchTeachers();
     } catch (err) {
-      alert("Failed to remove teacher: " + err.message);
+      alert("Failed to suspend user session role credentials: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 32px", display: "flex", alignItems: "center", height: 60 }}>
-        <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 18, color: C.textPrimary }}>📋 ExamPortal Admin</span>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body, paddingBottom: 60 }}>
+      
+      <style>{`
+        .admin-nav-tray { display: flex; gap: 12px; margin-bottom: 24px; }
+        .admin-form-grid-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .admin-action-row-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: end; }
+        .admin-table-scroll-view { overflow-x: auto; width: 100%; border-radius: 8px; }
+        .teacher-data-matrix-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 680px; }
+        .teacher-data-matrix-table th, .teacher-data-matrix-table td { padding: 12px 20px; }
+
+        @media (max-width: 640px) {
+          .admin-nav-tray { flex-direction: column !important; gap: 8px !important; }
+          .admin-nav-tray button { width: 100% !important; justify-content: center; }
+          .admin-form-grid-layout, .admin-action-row-split { grid-template-columns: 1fr !important; gap: 12px !important; }
+          .teacher-actions-flex-cell { flex-direction: column !important; gap: 6px !important; align-items: flex-start !important; }
+          .teacher-actions-flex-cell button { width: 100% !important; text-align: center; justify-content: center; }
+        }
+      `}</style>
+
+      {/* Global Module Navigation Bar */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60 }}>
+        <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 16, color: C.textPrimary }}>📋 ExamPortal Admin</span>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span style={{ fontSize: 14, color: C.textSecondary }}>{profile.name}</span>
-          <Btn variant="ghost" onClick={onLogout} style={{ padding: "7px 14px", fontSize: 13 }}>Sign out</Btn>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Btn variant="ghost" onClick={onLogout} style={{ padding: "6px 12px", fontSize: 13 }}>Sign out</Btn>
         </div>
       </div>
 
-      <div style={{ maxWidth: 840, margin: "40px auto", padding: "0 24px" }}>
-        <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-          <Btn variant={tab === "students" ? "primary" : "ghost"} onClick={() => setTab("students")}>Manage Students</Btn>
-          <Btn variant={tab === "teachers" ? "primary" : "ghost"} onClick={() => setTab("teachers")}>Manage Teachers</Btn>
+      <div style={{ maxWidth: 840, margin: "32px auto", padding: "0 16px" }}>
+        
+        {/* Core Tab System Toggles */}
+        <div className="admin-nav-tray">
+          <Btn variant={tab === "students" ? "primary" : "ghost"} onClick={() => setTab("students")} style={{ flex: 1 }}>Manage Students</Btn>
+          <Btn variant={tab === "teachers" ? "primary" : "ghost"} onClick={() => setTab("teachers")} style={{ flex: 1 }}>Manage Teachers</Btn>
         </div>
 
         {tab === "students" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Bulk Add */}
+            
+            {/* 1. BULK ENROLLMENT UTILITY CARD */}
             <Card>
-              <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 8px 0" }}>Bulk Student Enrollment</h2>
-              <p style={{ color: C.textSecondary, fontSize: 14, marginBottom: 16 }}>Upload an Excel file with headers: <strong>RegNo, Name, Email, Mobile, BatchNo, Exam</strong>.</p>
-              <input type="file" accept=".xlsx, .csv" onChange={handleStudentUpload} disabled={loading} style={{ color: C.textPrimary, marginBottom: 16 }} />
+              <h2 style={{ fontFamily: font.heading, fontSize: 17, color: C.textPrimary, margin: "0 0 8px 0" }}>Bulk Student Enrollment</h2>
+              <p style={{ color: C.textSecondary, fontSize: 13, marginBottom: 16, lineHeight: 1.5 }}>Upload an Excel file with headers: <strong>RegNo, Name, Email, Mobile, BatchNo, Exam</strong>. The password will automatically lock to their respective Registration Numbers.</p>
+              <input type="file" accept=".xlsx, .xls, .csv" onChange={handleStudentUpload} disabled={loading} style={{ color: C.textPrimary, marginBottom: 16, fontSize: 13 }} />
               {studentLogs.length > 0 && (
-                <div style={{ background: "#000", padding: 16, borderRadius: 8, height: 120, overflowY: "auto", fontFamily: font.mono, fontSize: 12, color: C.textMuted }}>
-                  {studentLogs.map((log, idx) => <div key={idx}>{log}</div>)}
+                <div style={{ background: "#0F111A", padding: 14, borderRadius: 8, height: 120, overflowY: "auto", fontFamily: font.mono, fontSize: 11, color: C.textMuted, border: `1px solid ${C.border}` }}>
+                  {studentLogs.map((log, idx) => <div key={idx} style={{ marginBottom: 4 }}>{log}</div>)}
                 </div>
               )}
             </Card>
 
-            {/* UPDATED: Add Single Student */}
+            {/* 2. SINGLE ADDITION MANAGEMENT CARD */}
             <Card>
-              <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 16px 0" }}>Add Single Student</h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <Input label="Full Name" value={sName} onChange={setSName} placeholder="Student Name" />
-                <Input label="Email" type="email" value={sEmail} onChange={setSEmail} placeholder="student@example.com" />
-                <Input label="Registration No." value={sRegNo} onChange={setSRegNo} placeholder="e.g. REG-001" />
-                <Input label="Mobile" value={sMobile} onChange={setSMobile} placeholder="e.g. 9876543210" />
-                <Input label="Batch" value={sBatch} onChange={setSBatch} placeholder="e.g. CAT-2026" />
+              <h2 style={{ fontFamily: font.heading, fontSize: 17, color: C.textPrimary, margin: "0 0 16px 0" }}>Add Single Student Account</h2>
+              <div className="admin-form-grid-layout">
+                <Input label="Full Name String" value={sName} onChange={setSName} placeholder="e.g. Rahul Verma" />
+                <Input label="Login E-Mail Address" type="email" value={sEmail} onChange={setSEmail} placeholder="rahul@domain.edu" />
+                <Input label="Registration Number (Access Password)" value={sRegNo} onChange={setSRegNo} placeholder="e.g. 21BCE1094" />
+                <Input label="Mobile Vector Tracker" value={sMobile} onChange={setSMobile} placeholder="e.g. 9876543210" />
+                <Input label="Assigned Class Batch Code" value={sBatch} onChange={setSBatch} placeholder="e.g. CAT-2026-A" />
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Exam</label>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Target Stream Pipeline</label>
                   <select 
                     value={sExam} 
                     onChange={(e) => setSExam(e.target.value)}
-                    style={{ width: "100%", padding: "12px 16px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.body, fontSize: 14, outline: "none", cursor: "pointer" }}
+                    style={{ width: "100%", padding: "12px 14px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.body, fontSize: 14, outline: "none", cursor: "pointer" }}
                   >
                     <option value="" disabled>-- Select Exam --</option>
                     {availableExams.map(exam => <option key={exam} value={exam}>{exam}</option>)}
                   </select>
                 </div>
               </div>
-              <Btn onClick={handleAddSingleStudent} disabled={loading} style={{ marginTop: 24 }}>
-                {loading ? "Adding..." : "Add Student"}
+              <Btn onClick={handleAddSingleStudent} disabled={loading} style={{ marginTop: 20, width: "100%", justifyContent: "center" }}>
+                {loading ? "Writing Profile..." : "Provision Student User"}
               </Btn>
 
               {singleStudentCreds && (
-                <div style={{ marginTop: 16, padding: 16, background: C.green + "22", border: `1px solid ${C.green}`, borderRadius: 8, color: C.textPrimary }}>
-                  ✅ Student created! <strong>Password: {singleStudentCreds.password}</strong>
+                <div style={{ marginTop: 16, padding: 14, background: "rgba(16, 185, 129, 0.08)", border: `1px solid ${C.green}`, borderRadius: 8, color: C.textPrimary, fontSize: 13 }}>
+                  ✅ Account compiled! Username ID: <strong>{singleStudentCreds.email}</strong> | Secured Password: <strong>{singleStudentCreds.password}</strong>
                 </div>
               )}
             </Card>
 
-            {/* Update Batch */}
+            {/* 3. BATCH MIGRATION LOGISTICS CARD */}
             <Card>
-              <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 16px 0" }}>Transfer Student Batch</h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "end" }}>
-                <Input label="Student's Email" type="email" value={uEmail} onChange={setUEmail} placeholder="student@example.com" />
-                <Input label="New Batch Name" value={uBatch} onChange={setUBatch} placeholder="e.g. CAT-2027" />
+              <h2 style={{ fontFamily: font.heading, fontSize: 17, color: C.textPrimary, margin: "0 0 16px 0" }}>Transfer Student Batch Track</h2>
+              <div className="admin-action-row-split">
+                <Input label="Target Student Identity Email" type="email" value={uEmail} onChange={setUEmail} placeholder="student@example.com" />
+                <Input label="Destination Batch Identity Target" value={uBatch} onChange={setUBatch} placeholder="e.g. CMAT-2027" />
               </div>
-              <Btn onClick={handleUpdateBatch} disabled={loading} style={{ marginTop: 16 }}>
-                {loading ? "Updating..." : "Transfer Batch"}
+              <Btn onClick={handleUpdateBatch} disabled={loading} style={{ marginTop: 16, width: "100%", justifyContent: "center" }}>
+                {loading ? "Migrating Data..." : "Execute Track Transfer"}
               </Btn>
             </Card>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Create Teacher */}
+            
+            {/* 4. FACULTY PROVISIONING MANAGEMENT CARD */}
             <Card>
-              <h2 style={{ fontFamily: font.heading, color: C.textPrimary, margin: "0 0 16px 0" }}>Provision Teacher Account</h2>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 400 }}>
-                <Input label="Teacher Name" value={tName} onChange={setTName} placeholder="e.g. Dr. R. Sharma" />
-                <Input label="Email Address" type="email" value={tEmail} onChange={setTEmail} placeholder="teacher@institute.com" />
+              <h2 style={{ fontFamily: font.heading, fontSize: 17, color: C.textPrimary, margin: "0 0 16px 0" }}>Provision Teacher Account</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div className="admin-form-grid-layout">
+                  <Input label="Faculty Profile Full Name" value={tName} onChange={setTName} placeholder="e.g. Prof. Anand Mehta" />
+                  <Input label="Official Communication E-Mail Address" type="email" value={tEmail} onChange={setTEmail} placeholder="mehta@institute.org" />
+                </div>
                 <div>
-                  <label style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Assign Exams</label>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Assign Exam Authority Pipelines</label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {availableExams.map(exam => (
                       <button
                         key={exam}
                         onClick={() => handleToggleExam(exam)}
                         style={{
-                          padding: "6px 12px", borderRadius: 20, border: `1px solid ${tExams.includes(exam) ? C.accent : C.border}`,
+                          padding: "6px 14px", borderRadius: 20, border: `1px solid ${tExams.includes(exam) ? C.accent : C.border}`,
                           background: tExams.includes(exam) ? C.accentDim : "transparent",
                           color: tExams.includes(exam) ? C.accentText : C.textMuted,
-                          cursor: "pointer", fontWeight: 600, fontSize: 12
+                          cursor: "pointer", fontWeight: 600, fontSize: 12, transition: "all 0.2s ease"
                         }}
                       >
                         {exam} {tExams.includes(exam) && "✓"}
@@ -322,48 +362,51 @@ export default function AdminDashboard({ profile, onLogout }) {
                     ))}
                   </div>
                 </div>
-                <Btn onClick={handleCreateTeacher} disabled={loading} style={{ marginTop: 12 }}>
-                  {loading ? "Creating..." : "Create Teacher Account"}
+                <Btn onClick={handleCreateTeacher} disabled={loading} style={{ marginTop: 8, width: "100%", justifyContent: "center" }}>
+                  {loading ? "Provisioning System Tokens..." : "Initialize Instructor Console Account"}
                 </Btn>
               </div>
               {teacherCredentials && (
-                <div style={{ marginTop: 24, padding: 16, background: C.green + "22", border: `1px solid ${C.green}`, borderRadius: 8, color: C.textPrimary }}>
-                  ✅ Teacher created! <strong>Password: {teacherCredentials.password}</strong>
+                <div style={{ marginTop: 20, padding: 14, background: "rgba(16, 185, 129, 0.08)", border: `1px solid ${C.green}`, borderRadius: 8, color: C.textPrimary, fontSize: 13 }}>
+                  ✅ Instructor profile added! Default Temporary Login Password: <strong>{teacherCredentials.password}</strong>
                 </div>
               )}
             </Card>
 
-            {/* List Active Teachers */}
+            {/* 5. ACTIVE STAFF MANAGEMENT ROSTER GRID CARD */}
             <Card style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.surface }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontFamily: font.heading, color: C.textPrimary }}>Active Teachers</h3>
+                <h3 style={{ margin: 0, fontSize: 16, fontFamily: font.heading, color: C.textPrimary }}>Active Staff Faculty Members</h3>
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 14 }}>
+              
+              <div className="admin-table-scroll-view">
+                <table className="teacher-data-matrix-table">
                   <thead>
                     <tr style={{ background: C.bg, borderBottom: `1px solid ${C.border}` }}>
-                      <th style={{ padding: "12px 20px", color: C.textSecondary, fontWeight: 600, fontSize: 12 }}>Name</th>
-                      <th style={{ padding: "12px 20px", color: C.textSecondary, fontWeight: 600, fontSize: 12 }}>Email</th>
-                      <th style={{ padding: "12px 20px", color: C.textSecondary, fontWeight: 600, fontSize: 12 }}>Assigned Exams</th>
-                      <th style={{ padding: "12px 20px", color: C.textSecondary, fontWeight: 600, fontSize: 12 }}>Actions</th>
+                      <th style={{ color: C.textSecondary, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Instructor Profile</th>
+                      <th style={{ color: C.textSecondary, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>E-Mail Destination</th>
+                      <th style={{ color: C.textSecondary, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Assigned Authority Tracks</th>
+                      <th style={{ color: C.textSecondary, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Management Operations</th>
                     </tr>
                   </thead>
                   <tbody>
                     {teachersList.length === 0 ? (
-                      <tr><td colSpan="4" style={{ padding: "32px", textAlign: "center", color: C.textMuted }}>No active teachers found.</td></tr>
+                      <tr><td colSpan="4" style={{ padding: "32px", textAlign: "center", color: C.textMuted }}>No active structural teacher account entities verified in registry.</td></tr>
                     ) : (
                       teachersList.map((t, idx) => (
-                        <tr key={t.uid} style={{ borderBottom: `1px solid ${C.border}`, background: idx % 2 === 0 ? "transparent" : C.surface }}>
-                          <td style={{ padding: "12px 20px", color: C.textPrimary, fontWeight: 500 }}>{t.name}</td>
-                          <td style={{ padding: "12px 20px", color: C.textSecondary }}>{t.email}</td>
-                          <td style={{ padding: "12px 20px" }}>
+                        <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}`, background: idx % 2 === 0 ? "transparent" : C.surface }}>
+                          <td style={{ color: C.textPrimary, fontWeight: 600 }}>{t.name}</td>
+                          <td style={{ color: C.textSecondary, fontFamily: font.mono, fontSize: 13 }}>{t.email}</td>
+                          <td>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {t.exams?.map(e => <Badge key={e} color="accent">{e}</Badge>)}
                             </div>
                           </td>
-                          <td style={{ padding: "12px 20px", display: "flex", gap: 10 }}>
-                            <button onClick={() => openEditTeacher(t)} style={{ background: "none", border: `1px solid ${C.border}`, color: C.textPrimary, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Edit</button>
-                            <button onClick={() => handleRemoveTeacher(t.uid, t.name)} style={{ background: "none", border: `1px solid ${C.red}44`, color: C.redText, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Remove</button>
+                          <td style={{ padding: "12px 20px" }}>
+                            <div className="teacher-actions-flex-cell" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <button onClick={() => openEditTeacher(t)} style={{ background: "none", border: `1px solid ${C.border}`, color: C.textPrimary, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Modify Tracks</button>
+                              <button onClick={() => handleRemoveTeacher(t.id, t.name)} style={{ background: "none", border: `1px solid ${C.red}33`, color: C.redText, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Revoke Console</button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -376,21 +419,21 @@ export default function AdminDashboard({ profile, onLogout }) {
         )}
       </div>
 
-      {/* Edit Teacher Exams Modal */}
+      {/* CORE SUBSYSTEM TRACK AUTHORITY EDIT INTERCEPT OVERLAY MODAL */}
       {editTeacher && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.8)", display: "grid", placeItems: "center", zIndex: 100 }}>
-          <Card style={{ width: 420, maxWidth: "90%", padding: 32 }}>
-            <h2 style={{ fontFamily: font.heading, fontSize: 18, margin: "0 0 16px", color: C.textPrimary }}>Edit Exams: {editTeacher.name}</h2>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.82)", display: "grid", placeItems: "center", zIndex: 600, padding: 16 }}>
+          <Card style={{ width: 420, maxWidth: "100%", padding: 24 }}>
+            <h2 style={{ fontFamily: font.heading, fontSize: 17, margin: "0 0 16px", color: C.textPrimary }}>Edit Authority Pipelines: {editTeacher.name}</h2>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
               {availableExams.map(exam => (
                 <button
                   key={exam}
                   onClick={() => setEditExams(prev => prev.includes(exam) ? prev.filter(e => e !== exam) : [...prev, exam])}
                   style={{
-                    padding: "6px 12px", borderRadius: 20, border: `1px solid ${editExams.includes(exam) ? C.accent : C.border}`,
+                    padding: "6px 14px", borderRadius: 20, border: `1px solid ${editExams.includes(exam) ? C.accent : C.border}`,
                     background: editExams.includes(exam) ? C.accentDim : "transparent",
                     color: editExams.includes(exam) ? C.accentText : C.textMuted,
-                    cursor: "pointer", fontWeight: 600, fontSize: 12
+                    cursor: "pointer", fontWeight: 600, fontSize: 12, transition: "all 0.2s ease"
                   }}
                 >
                   {exam} {editExams.includes(exam) && "✓"}
@@ -399,7 +442,7 @@ export default function AdminDashboard({ profile, onLogout }) {
             </div>
             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
               <Btn variant="ghost" onClick={() => setEditTeacher(null)} disabled={loading}>Cancel</Btn>
-              <Btn variant="primary" onClick={saveTeacherExams} disabled={loading}>{loading ? "Saving..." : "Save Changes"}</Btn>
+              <Btn variant="primary" onClick={saveTeacherExams} disabled={loading}>{loading ? "Saving Records..." : "Commit Structure Changes"}</Btn>
             </div>
           </Card>
         </div>
