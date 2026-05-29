@@ -9,26 +9,65 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("my-tests"); // "my-tests" or "history"
 
+  // --- Secure Pin Modal States ---
+  const [selectedPinTest, setSelectedPinTest] = useState(null);
+  const [enteredPin, setEnteredPin] = useState("");
+  const [pinError, setPinError] = useState("");
+
+  // Derive a reliable account identifier, prioritizing email string paths
+  const accountIdentifier = profile?.email || profile?.uid;
+
   useEffect(() => {
     async function loadStudentData() {
+      // DEFENSIVE GUARD: Exit early if the profile data hasn't fully hydrated yet
+      if (!accountIdentifier) {
+        console.warn("Skipping dashboard lookup pipeline: Account identity parameter is undefined.");
+        return;
+      }
+
+      setLoading(true);
       try {
         const [enrolledTests, pastAttempts] = await Promise.all([
-          getStudentTests(profile.uid),
-          getStudentAttempts(profile.uid)
+          getStudentTests(accountIdentifier),
+          getStudentAttempts(accountIdentifier)
         ]);
-        setTests(enrolledTests);
-        setAttempts(pastAttempts);
+        setTests(enrolledTests || []);
+        setAttempts(pastAttempts || []);
       } catch (err) {
         console.error("Error loading dashboard data:", err);
       } finally {
         setLoading(false);
       }
     }
+    
     loadStudentData();
-  }, [profile.uid]);
+  }, [accountIdentifier]);
+
+  // --- Pin Verification Logic Handler ---
+  const handleVerifyPinAndLaunch = () => {
+    setPinError("");
+    
+    const cleanInputPin = String(enteredPin).trim();
+    const targetTestPin = String(selectedPinTest?.pin || "").trim();
+
+    // If the test doesn't actually require a pin configuration, let them pass
+    if (!selectedPinTest?.pin || targetTestPin === "" || targetTestPin === "undefined") {
+      onStartTest(selectedPinTest);
+      setSelectedPinTest(null);
+      return;
+    }
+
+    if (cleanInputPin === targetTestPin) {
+      onStartTest(selectedPinTest);
+      setSelectedPinTest(null);
+      setEnteredPin("");
+    } else {
+      setPinError("Invalid test access PIN code. Please confirm entry coordinates with your examiner.");
+    }
+  };
 
   const calculateAverageScore = () => {
-    if (attempts.length === 0) return "0%";
+    if (!attempts || attempts.length === 0) return "0%";
     const totalPercentage = attempts.reduce((acc, curr) => {
       const percentage = curr.total > 0 ? (curr.score / curr.total) * 100 : 0;
       return acc + percentage;
@@ -47,7 +86,6 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body, paddingBottom: 40 }}>
       
-      {/* Dynamic Responsive Styles Injection */}
       <style>{`
         .student-metrics-grid {
           display: grid;
@@ -98,13 +136,13 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60 }}>
         <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 16, color: C.textPrimary }}>🎓 Student Portal</span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 13, color: C.textMuted, marginRight: 16, display: "inline-block" }}>{profile.name}</span>
+        <span style={{ fontSize: 13, color: C.textMuted, marginRight: 16, display: "inline-block" }}>{profile?.name || "Student"}</span>
         <Btn variant="ghost" onClick={onLogout} style={{ padding: "6px 12px", fontSize: 13 }}>Sign out</Btn>
       </div>
 
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
         
-        {/* 1. TOP METRICS TRACKING GRID */}
+        {/* TOP METRICS TRACKING GRID */}
         <div className="student-metrics-grid">
           <Card style={{ padding: 20, textAlign: "left" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", marginBottom: 6 }}>Tests Enrolled</div>
@@ -122,7 +160,7 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
           </Card>
         </div>
 
-        {/* 2. SUB-TAB TOGGLES CONTAINER */}
+        {/* SUB-TAB TOGGLES CONTAINER */}
         <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${C.border}`, marginBottom: 20, paddingLeft: 8 }}>
           <button 
             onClick={() => setActiveTab("my-tests")}
@@ -148,7 +186,7 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
           </button>
         </div>
 
-        {/* 3. SUB-VIEW CONDITIONAL RENDER WORKFLOW */}
+        {/* SUB-VIEW CONDITIONAL RENDER WORKFLOW */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {activeTab === "my-tests" ? (
             <>
@@ -183,7 +221,14 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
                         <Btn 
                           variant="primary" 
                           disabled={!test.isActive}
-                          onClick={() => onStartTest(test)} 
+                          onClick={() => {
+                            // FIXED: Intercept step to verify if the test has an active password pin rule
+                            if (test.pin && String(test.pin).trim() !== "" && String(test.pin) !== "undefined") {
+                              setSelectedPinTest(test);
+                            } else {
+                              onStartTest(test);
+                            }
+                          }} 
                           style={{ fontSize: 13, padding: "8px 16px" }}
                         >
                           Start Test →
@@ -225,6 +270,34 @@ export default function StudentDashboard({ profile, onLogout, onStartTest }) {
         </div>
 
       </div>
+
+      {/* --- Safe Verification Pin Entry Modal Overlay Panel --- */}
+      {selectedPinTest && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(10, 11, 14, 0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 24, borderRadius: 16, maxWidth: 360, width: "100%" }}>
+            <h3 style={{ margin: "0 0 6px", color: C.textPrimary, fontSize: 16, fontWeight: 800, fontFamily: font.heading }}>Secure Exam Verification</h3>
+            <p style={{ color: C.textMuted, fontSize: 12, margin: "0 0 20px" }}>This evaluation requires an administrative access PIN code to unlock the session parameters.</p>
+            
+            <form onSubmit={(e) => { e.preventDefault(); handleVerifyPinAndLaunch(); }} style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+              <input 
+                type="text" 
+                value={enteredPin} 
+                onChange={(e) => setEnteredPin(e.target.value)} 
+                placeholder="Enter test access PIN"
+                autoFocus
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.mono, fontSize: 14, outline: "none" }}
+              />
+              {pinError && <span style={{ color: C.redText || "#ef4444", fontSize: 12, fontWeight: 600 }}>{pinError}</span>}
+            </form>
+
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <Btn onClick={() => { setSelectedPinTest(null); setEnteredPin(""); setPinError(""); }} variant="ghost" style={{ padding: "6px 12px", fontSize: 12 }}>Cancel</Btn>
+              <Btn onClick={handleVerifyPinAndLaunch} variant="primary" style={{ padding: "6px 14px", fontSize: 12 }}>Unlock and Start →</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore"; 
 import { db } from "../../firebase/config";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
 
@@ -10,7 +10,7 @@ export default function AuthScreen({ onLogin }) {
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
-    if(e) e.preventDefault();
+    if (e) e.preventDefault();
     setError("");
     
     if (!email.trim() || !password.trim()) {
@@ -23,27 +23,15 @@ export default function AuthScreen({ onLogin }) {
       const normalizedEmail = email.trim().toLowerCase();
       const cleanPassword = password.trim();
 
-      // 1. Target lookup check using the email key directly
-      let userDocRef = doc(db, "users", normalizedEmail);
-      let userSnapshot = await getDoc(userDocRef);
-      let userData = null;
+      // Direct document path fetch - matches "allow get: if true" flawlessly
+      const userDocRef = doc(db, "users", normalizedEmail);
+      const userSnapshot = await getDoc(userDocRef);
 
-      if (userSnapshot.exists()) {
-        userData = userSnapshot.data();
-      } else {
-        // Fallback secondary matching index logic query pass for backwards-compatibility 
-        const q = query(collection(db, "users"), where("email", "==", normalizedEmail));
-        const querySnap = await getDocs(q);
-        if (!querySnap.empty) {
-          userData = querySnap.docs[0].data();
-        }
-      }
-
-      if (!userData) {
+      if (!userSnapshot.exists()) {
         throw new Error("No account found matching this Email ID.");
       }
 
-      // 2. Validate password parameters matching the regNo string constraint rules
+      const userData = userSnapshot.data();
       const storedRegistrationPassword = userData.regNo || userData.passwordCredentialBackup;
 
       if (!storedRegistrationPassword || String(storedRegistrationPassword).trim() !== cleanPassword) {
@@ -51,10 +39,9 @@ export default function AuthScreen({ onLogin }) {
       }
 
       if (userData.role === "revoked") {
-        throw new Error("This profile console platform key access parameter is suspended.");
+        throw new Error("This profile console access has been suspended.");
       }
 
-      // 3. Complete auth handshake transition
       await onLogin(normalizedEmail, cleanPassword);
       
     } catch (err) {

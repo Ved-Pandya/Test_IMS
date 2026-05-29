@@ -2,7 +2,7 @@
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, deleteDoc } from "firebase/firestore"; // <-- Added doc and deleteDoc imports
 import { db } from "../../firebase/config";
 import TestCreationForm from "./TestCreationForm";
 import TeacherTestDetail from "./TeacherTestDetail";
@@ -90,6 +90,27 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
+  // --- ADDED: CORE ATTEMPT RESET ENGINE ---
+  const handleResetStudentAttempt = async (attemptId, studentName) => {
+    if (!window.confirm(`⚠️ WARNING: Are you sure you want to reset the exam attempt for ${studentName || "this student"}?\nThis will permanently delete their answers and allow them to retake the test.`)) {
+      return;
+    }
+
+    try {
+      // 1. Permanently remove the target attempt doc row from the cloud database
+      await deleteDoc(doc(db, "attempts", attemptId));
+      
+      // 2. Clear from local state so the metrics recalculate and the screen updates instantly
+      setSelectedAttempts((prev) => prev.filter((a) => a.id !== attemptId));
+      setAllAttempts((prev) => prev.filter((a) => a.id !== attemptId));
+      
+      alert("Exam session successfully cleared. The student can now re-enter the test panel.");
+    } catch (err) {
+      console.error("Error executing reset workflow loop:", err);
+      alert("Failed to wipe search logs: " + err.message);
+    }
+  };
+
   const handleConfirmEnroll = async () => {
     setEnrollLoading(true);
     try {
@@ -135,7 +156,19 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
 
   if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading...</div>;
   if (creating) return <TestCreationForm teacherId={profile.uid} teacherName={profile.name} onBack={() => setCreating(false)} onSave={handleCreateTest} />;
-  if (selectedTest) return <TeacherTestDetail test={selectedTest} attempts={attemptsLoading ? [] : selectedAttempts} onBack={() => setSelectedTest(null)} onDemo={() => onDemoTest(selectedTest)} />;
+  
+  // FIXED: Injected the new handleResetStudentAttempt prop downward into the sub-detail interface block!
+  if (selectedTest) {
+    return (
+      <TeacherTestDetail 
+        test={selectedTest} 
+        attempts={attemptsLoading ? [] : selectedAttempts} 
+        onBack={() => setSelectedTest(null)} 
+        onDemo={() => onDemoTest(selectedTest)}
+        onResetAttempt={handleResetStudentAttempt} // <-- PASSED PROP DOWN HERE
+      />
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body }}>
@@ -222,7 +255,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                 <div className="teacher-card-actions">
                   <Btn variant="ghost" onClick={() => onDemoTest(test)} style={{ fontSize: 13, padding: "8px 14px", border: `1px solid ${C.border}` }}>👁 Preview</Btn>
                   <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 14px" }}>🏆 Board</Btn>
-                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
+                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: null })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
                 </div>
               </Card>

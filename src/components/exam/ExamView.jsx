@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Btn, Card, Badge, C, font } from "../ui/Primitives";
 
 export default function ExamView({ test, studentProfile, onSubmitExam }) {
@@ -17,6 +17,17 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const [violations, setViolations] = useState([]); 
   const [warningCount, setWarningCount] = useState(0);
   const MAX_ALLOWED_VIOLATIONS = 2; // Hard-lock terminal submission on the 2nd violation
+  
+  // --- Safe Modal UI States ---
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [currentWarningReason, setCurrentWarningReason] = useState("");
+  const [showTerminationModal, setShowTerminationModal] = useState(false);
+  const [terminationReason, setTerminationReason] = useState("");
+
+  // A mutable reference to track modal visibility status dynamically without triggering re-renders
+  // This completely stops window blur events from tripping security checks while a system prompt is active
+  const isSystemModalOpenRef = useRef(false);
   
   // --- Timer Operations Engine ---
   const [timeLeft, setTimeLeft] = useState((test.duration || 120) * 60);
@@ -40,12 +51,19 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     // 1. Intercept Visibility Changes (Tab Switching / Minimizing)
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        if (isSystemModalOpenRef.current && showTerminationModal) return;
         triggerProctorViolation("Tab switched or window minimized");
       }
     };
 
     // 2. Intercept Window Blur (Clicking outside browser / alt-tabbing / loss of focal plane)
     const handleWindowBlur = () => {
+      // PROTECTIVE GAP CLOSURE: If a custom React modal panel is intentionally open,
+      // skip execution to avoid throwing false violation warning logs.
+      if (isSystemModalOpenRef.current) {
+        console.log("Proctoring focus monitor paused: Active session dialog open.");
+        return;
+      }
       triggerProctorViolation("Left the active exam window focus area");
     };
 
@@ -63,7 +81,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         e.key === "F12"
       ) {
         e.preventDefault();
-        alert("⚠️ Security Violation: Copy, Paste, and Developer Tools are disabled during this exam.");
       }
     };
 
@@ -78,7 +95,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [warningCount, violations]); 
+  }, [warningCount, violations, showTerminationModal]); 
 
   const triggerProctorViolation = (reasonStr) => {
     const newCount = warningCount + 1;
@@ -90,11 +107,12 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     setWarningCount(newCount);
 
     if (newCount >= MAX_ALLOWED_VIOLATIONS) {
-      // Automatic immediate lockout protocol: triggers submission pipeline bypass
       handleAutoSubmit("Exceeded Security Integrity Limits (2nd Violation)");
     } else {
-      // First warning modal alert box
-      alert(`⚠️ SECURITY WARNING!\nYou have moved away from the exam screen.\nMatch Rule Violations: ${newCount} / ${MAX_ALLOWED_VIOLATIONS}.\n\nWARNING: Leaving this screen ONE more time will cause an immediate automatic submission.`);
+      // Display focus-safe UI warnings instead of thread-blocking alert() boxes
+      isSystemModalOpenRef.current = true;
+      setCurrentWarningReason(reasonStr);
+      setShowWarningModal(true);
     }
   };
 
@@ -188,19 +206,39 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     };
   };
 
-  const handleManualSubmit = () => {
-    const flatQuestions = test.sections.flatMap((s) => s.questions);
-    const attemptedCount = Object.keys(answers).filter(k => answers[k] !== "").length;
-    
-    if (window.confirm(`Are you sure you want to finish? You answered ${attemptedCount} / ${flatQuestions.length} questions.`)) {
-      const payload = processCalculatedGrading("Manual Submission");
-      onSubmitExam(payload);
-    }
+  const handleManualSubmitTrigger = () => {
+    // Activate proctor bypass and mount manual confirm sheet overlay
+    isSystemModalOpenRef.current = true;
+    setShowSubmitModal(true);
+  };
+
+  const handleConfirmManualSubmit = () => {
+    isSystemModalOpenRef.current = false;
+    setShowSubmitModal(false);
+    const payload = processCalculatedGrading("Manual Submission");
+    onSubmitExam(payload);
+  };
+
+  const handleCancelManualSubmit = () => {
+    isSystemModalOpenRef.current = false;
+    setShowSubmitModal(false);
+  };
+
+  const handleCloseWarningModal = () => {
+    isSystemModalOpenRef.current = false;
+    setShowWarningModal(false);
   };
 
   const handleAutoSubmit = (reason) => {
-    alert(`Exam session terminated: ${reason}`);
-    const payload = processCalculatedGrading(`Auto Submission (${reason})`);
+    isSystemModalOpenRef.current = true;
+    setTerminationReason(reason);
+    setShowTerminationModal(true);
+  };
+
+  const handleConfirmTerminationSubmit = () => {
+    isSystemModalOpenRef.current = false;
+    setShowTerminationModal(false);
+    const payload = processCalculatedGrading(`Auto Submission (${terminationReason})`);
     onSubmitExam(payload);
   };
 
@@ -215,6 +253,8 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   };
 
   const hasPassage = currentQuestion?.passage && currentQuestion.passage.trim().length > 0;
+  const flatQuestions = test.sections.flatMap((s) => s.questions);
+  const attemptedCount = Object.keys(answers).filter(k => answers[k] !== undefined && answers[k] !== "").length;
 
   if (!currentQuestion) return <div style={{ color: C.textPrimary, padding: 40 }}>Empty test parameters.</div>;
 
@@ -250,7 +290,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         }
       `}</style>
 
-      {/* 1. HEADER ROW */}
+      {/* HEADER ROW */}
       <div style={{ height: 64, background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <h1 style={{ fontSize: 15, fontFamily: font.heading, fontWeight: 800, color: C.textPrimary, margin: 0, maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{test.title}</h1>
@@ -264,15 +304,15 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           <Badge color={timeLeft < 300 ? "red" : "accent"} style={{ fontSize: 14, padding: "6px 12px", fontFamily: font.mono, fontWeight: 700 }}>
             ⏱ {formatTime(timeLeft)}
           </Badge>
-          <Btn variant="primary" onClick={handleManualSubmit} style={{ background: C.red, color: "#fff", padding: "6px 12px", fontSize: 13 }}>Submit</Btn>
+          <Btn onClick={handleManualSubmitTrigger} style={{ background: C.red, color: "#fff", padding: "6px 12px", fontSize: 13, border: "none" }}>Submit</Btn>
         </div>
       </div>
 
-      {/* 2. SECTION TABS ROW - COMBINED CLICK/TOUCH OPTIMIZED */}
+      {/* SECTION TABS ROW */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", gap: 4, padding: "4px 24px 0", overflowX: "auto" }}>
         {test.sections.map((sec, idx) => {
           const changeSection = (e) => {
-            e.preventDefault(); // Annihilates the 300ms double-tap delay in mobile-desktop modes instantly
+            e.preventDefault();
             setCurrentSectionIdx(idx); 
             setCurrentQuestionIdx(0);
           };
@@ -300,7 +340,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         })}
       </div>
 
-      {/* MOBILE ONLY NAVIGATION ROW */}
       <div className="mobile-palette-toggle-bar">
         <Badge color="accent">Q. {currentQuestionIdx + 1} of {currentSection.questions.length}</Badge>
         <Btn variant="ghost" onClick={() => setMobilePaletteOpen(true)} style={{ padding: "4px 10px", fontSize: 12 }}>
@@ -308,10 +347,8 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         </Btn>
       </div>
 
-      {/* 3. CORE SPLIT INTEGRFACE PANE */}
+      {/* CORE SPLIT INTERFACE PANE */}
       <div className="exam-layout-grid" style={{ flex: 1, overflow: "hidden" }}>
-        
-        {/* LEFT VIEWPORT SPACE */}
         <div style={{ padding: "16px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="workspace-split-pane" style={{ height: "100%", maxHeight: "calc(100vh - 180px)", overflow: "hidden" }}>
             
@@ -396,10 +433,8 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 
               </Card>
             </div>
-
           </div>
 
-          {/* LOWER RUNTIME TRACK CONTROLS */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
             <Btn variant="ghost" onClick={handlePrev} disabled={currentSectionIdx === 0 && currentQuestionIdx === 0} style={{ padding: "8px 14px", fontSize: 13 }}>
               ← Prev
@@ -408,14 +443,12 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
               Save & Next →
             </Btn>
           </div>
-
         </div>
 
         {/* DESKTOP PERMANENT RIGHT SIDEBAR */}
         <div className="desktop-right-rail" style={{ background: C.surface, borderLeft: `1px solid ${C.border}`, padding: 20, flexDirection: "column", gap: 20, overflowY: "auto" }}>
           <PaletteContent currentSection={currentSection} currentQuestionIdx={currentQuestionIdx} getQuestionStatus={getQuestionStatus} setCurrentQuestionIdx={setCurrentQuestionIdx} test={test} />
         </div>
-
       </div>
 
       {/* MOBILE OVERLAY INTERACTION DRAWER */}
@@ -428,6 +461,58 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
             </div>
             <div style={{ width: "100%", height: 1, background: C.border }} />
             <PaletteContent currentSection={currentSection} currentQuestionIdx={currentQuestionIdx} getQuestionStatus={getQuestionStatus} setCurrentQuestionIdx={setQuestionAndCloseMobile} test={test} />
+          </div>
+        </div>
+      )}
+
+      {/* --- INLINE FOCUS-SAFE PORTAL CUSTOM MODALS --- */}
+      
+      {/* 1. MANUAL SUBMISSION DIALOG */}
+      {showSubmitModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(10, 11, 14, 0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 28, borderRadius: 16, maxWidth: 420, width: "100%", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)" }}>
+            <h3 style={{ margin: "0 0 10px", color: C.textPrimary, fontSize: 18, fontWeight: 800, fontFamily: font.heading }}>Confirm Exam Submission</h3>
+            <p style={{ color: C.textSecondary, fontSize: 14, lineHeight: 1.5, margin: "0 0 20px" }}>
+              Are you sure you want to finish your test session? You have answered <strong>{attemptedCount}</strong> out of <strong>{flatQuestions.length}</strong> questions.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <Btn onClick={handleCancelManualSubmit} variant="ghost" style={{ padding: "8px 16px", fontSize: 13 }}>Cancel and Return</Btn>
+              <Btn onClick={handleConfirmManualSubmit} style={{ background: C.green || "#10b981", color: "#fff", padding: "8px 16px", fontSize: 13, border: "none" }}>Confirm Submission</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. PROCTORING VIOLATION WARNING DIALOG */}
+      {showWarningModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(220, 38, 38, 0.4)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
+          <div style={{ background: C.surface, border: `2px solid ${C.red || "#ef4444"}`, padding: 28, borderRadius: 16, maxWidth: 420, width: "100%", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)" }}>
+            <h3 style={{ margin: "0 0 10px", color: C.red || "#ef4444", fontSize: 18, fontWeight: 800, fontFamily: font.heading }}>⚠️ SECURITY VIOLATION WARNING</h3>
+            <p style={{ color: C.textPrimary, fontSize: 14, lineHeight: 1.5, margin: "0 0 12px" }}>
+              The system detected an out-of-bounds action: <strong style={{ color: C.accentText }}>"{currentWarningReason}"</strong>.
+            </p>
+            <p style={{ color: C.textSecondary, fontSize: 13, lineHeight: 1.5, margin: "0 0 24px" }}>
+              Match Rule Violations: <strong>{warningCount} / {MAX_ALLOWED_VIOLATIONS}</strong>.<br />
+              <span style={{ color: C.redText, fontWeight: 700 }}>WARNING:</span> Leaving this active window layout <strong>ONE</strong> more time will trigger an immediate automatic session lock and submission.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Btn onClick={handleCloseWarningModal} style={{ background: C.textPrimary, color: C.bg, padding: "8px 20px", fontSize: 13, fontWeight: 700, border: "none" }}>I Understand, Resume Test</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. HARD TERMINATION LOCKOUT DIALOG */}
+      {showTerminationModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "#0a0b0e", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 32, borderRadius: 16, maxWidth: 460, width: "100%", textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🚫</div>
+            <h3 style={{ margin: "0 0 12px", color: C.red || "#ef4444", fontSize: 20, fontWeight: 800, fontFamily: font.heading }}>Exam Session Terminated</h3>
+            <p style={{ color: C.textSecondary, fontSize: 14, lineHeight: 1.6, margin: "0 0 28px" }}>
+              Your terminal link has been locked due to the following system event:<br />
+              <strong style={{ color: C.textPrimary }}>{terminationReason}</strong>
+            </p>
+            <Btn onClick={handleConfirmTerminationSubmit} style={{ background: C.red, color: "#fff", width: "100%", padding: "12px", fontSize: 14, fontWeight: 700, border: "none" }}>Transmit Log Data & Exit</Btn>
           </div>
         </div>
       )}

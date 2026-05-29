@@ -7,7 +7,7 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, collection, query, where, getDocs, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db } from "./config";
 
 const firebaseConfig = {
@@ -31,20 +31,24 @@ export async function logout() {
   await signOut(auth);
 }
 
-export async function getUserProfile(uid) {
-  // Check if uid is an email address string (from custom lookups) or standard UUID token
-  if (uid.includes("@")) {
+export async function getUserProfile(uid, email = null) {
+  // 1. If an email hint is present, check it immediately (Fastest path for new architecture)
+  if (email) {
+    const emailSnap = await getDoc(doc(db, "users", email.toLowerCase().trim()));
+    if (emailSnap.exists()) return emailSnap.data();
+  }
+
+  // 2. Check if uid itself is a plain email string
+  if (uid && uid.includes("@")) {
     const snap = await getDoc(doc(db, "users", uid.toLowerCase().trim()));
     if (snap.exists()) return snap.data();
   }
   
-  const snap = await getDoc(doc(db, "users", uid));
-  if (snap.exists()) return snap.data();
-
-  // Secondary Fallback Query Index match if document names are keyed under standard UUID
-  const q = query(collection(db, "users"), where("uid", "==", uid));
-  const querySnap = await getDocs(q);
-  if (!querySnap.empty) return querySnap.docs[0].data();
+  // 3. Look up via user UID directly (Path for manually seeded accounts)
+  if (uid) {
+    const snap = await getDoc(doc(db, "users", uid));
+    if (snap.exists()) return snap.data();
+  }
 
   throw new Error("User profile not found inside index mapping reference.");
 }
@@ -53,11 +57,12 @@ export function subscribeToAuth(callback) {
   return onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
       try {
-        // Fallback checks passing down either raw email string keys or auth token ids
-        const profile = await getUserProfile(firebaseUser.email || firebaseUser.uid);
+        // FIXED: Passes both the UID and the email string to guarantee a clean getDoc path
+        const profile = await getUserProfile(firebaseUser.uid, firebaseUser.email);
         callback({ user: firebaseUser, profile });
       } catch (err) {
-        callback({ user: firebaseUser, profile: { name: firebaseUser.email.split("@")[0], role: "student" } });
+        console.warn("Real-time profile sync fallback active:", err.message);
+        callback({ user: firebaseUser, profile: { name: firebaseUser.email?.split("@")[0] || "User", role: "student" } });
       }
     } else {
       callback({ user: null, profile: null });
@@ -65,14 +70,12 @@ export function subscribeToAuth(callback) {
   });
 }
 
-// Admin Helper: Bulk/Single Student Creation Custom Router Mapping
 export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, exam }) {
   const cleanEmail = email.trim().toLowerCase();
-  const cleanPassword = regNo.trim(); // <-- ENFORCED: Sets Registration Number directly as the authentication passkey string
+  const cleanPassword = regNo.trim();
 
   const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
   
-  // FIXED: Document name is now explicitly set to the clean email string for uniform lookup speeds!
   await setDoc(doc(db, "users", cleanEmail), {
     uid: cred.user.uid,
     email: cleanEmail,
@@ -89,10 +92,9 @@ export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, 
   return { email: cleanEmail, password: cleanPassword, regNo: cleanPassword, status: "Success" };
 }
 
-// Admin Helper: Teacher Creation Custom Router Mapping
 export async function createTeacherAsAdmin({ email, name, exams }) {
   const cleanEmail = email.trim().toLowerCase();
-  const defaultTeacherPassword = name.trim().split(" ")[0] + "123"; // Clean string configuration pass
+  const defaultTeacherPassword = name.trim().split(" ")[0] + "123";
 
   const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, defaultTeacherPassword);
   
@@ -102,7 +104,7 @@ export async function createTeacherAsAdmin({ email, name, exams }) {
     name: name.trim(),
     role: "teacher",
     exams: exams || [],
-    regNo: defaultTeacherPassword, // Saved reference flag
+    regNo: defaultTeacherPassword,
     createdAt: new Date(),
   });
 

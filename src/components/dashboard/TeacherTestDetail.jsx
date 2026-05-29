@@ -1,6 +1,7 @@
 import { Badge, Btn, Card, C, font } from "../ui/Primitives";
 
-export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
+// FIXED: Destructured the onResetAttempt prop from the parent state manager container
+export default function TeacherTestDetail({ test, attempts, onBack, onDemo, onResetAttempt }) {
   // Compute analytics data points
   const totalEnrolled = test.enrolledStudents?.length || 0;
   const totalAttempts = attempts.length;
@@ -13,9 +14,9 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
       
       <style>{`
         .detail-header-tray {
-          background: C.surface; border-bottom: 1px solid ${C.border};
-          padding: 0 32px; display: flex; alignItems: center; height: 60;
-          position: sticky; top: 0; z-index: 10; background: ${C.surface};
+          background: ${C.surface}; border-bottom: 1px solid ${C.border};
+          padding: 0 32px; display: flex; align-items: center; height: 60px;
+          position: sticky; top: 0; z-index: 10;
         }
         .analytics-summary-grid {
           display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 32px;
@@ -25,10 +26,11 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
           border: 1px solid ${C.border}; border-radius: 12px;
         }
         .proctor-table {
-          width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 600px;
+          width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 750px;
         }
         .proctor-table th, .proctor-table td {
           padding: 14px 18px; border-bottom: 1px solid ${C.border}; color: ${C.textPrimary};
+          vertical-align: middle;
         }
         .proctor-table th {
           background: ${C.bg}; color: ${C.textMuted}; font-weight: 600; font-size: 12px; text-transform: uppercase;
@@ -81,12 +83,13 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
                 <th>Score Value</th>
                 <th>Submission Route</th>
                 <th>Security Infractions Log</th>
+                <th style={{ textAlign: "right" }}>Actions</th> {/* FIXED: Added Actions header node */}
               </tr>
             </thead>
             <tbody>
               {attempts.length === 0 ? (
                 <tr>
-                  <td colSpan="4" style={{ textAlign: "center", color: C.textMuted, padding: 32 }}>No candidate submission logs recorded for this test configuration item.</td>
+                  <td colSpan="5" style={{ textAlign: "center", color: C.textMuted, padding: 32 }}>No candidate submission logs recorded for this test configuration item.</td>
                 </tr>
               ) : (
                 attempts.map((att) => (
@@ -99,7 +102,7 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
                     <td>
                       <Badge color={att.reason?.includes("Auto") ? "red" : "gray"}>{att.reason || "Manual Run"}</Badge>
                     </td>
-                    <td style={{ fontSize: 12, maxMaxWidth: "320px" }}>
+                    <td style={{ fontSize: 12, maxWidth: "260px" }}>
                       {att.violations && att.violations.length > 0 ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           {att.violations.map((v, i) => (
@@ -109,6 +112,22 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo }) {
                       ) : (
                         <span style={{ color: C.textMuted }}>None (Flawless Integrity)</span>
                       )}
+                    </td>
+                    {/* FIXED: Action cell providing the operational entry reset trigger tool */}
+                    <td style={{ textAlign: "right" }}>
+                      <Btn 
+                        variant="ghost" 
+                        onClick={() => onResetAttempt(att.id, att.studentName)}
+                        style={{ 
+                          padding: "6px 12px", 
+                          fontSize: 12, 
+                          color: C.redText || "#ef4444", 
+                          background: "rgba(239, 68, 68, 0.05)",
+                          border: "1px solid rgba(239, 68, 68, 0.15)"
+                        }}
+                      >
+                        🔄 Reset Attempt
+                      </Btn>
                     </td>
                   </tr>
                 ))

@@ -106,18 +106,31 @@ export default function App() {
     setView("dashboard");
   };
 
+  // --- UPDATED: SECURE IMMEDIATE DASHBOARD REDIRECTION PIPELINE ---
   const handleExamSubmitPipeline = async (attemptPayload) => {
     if (previewMode) {
       console.log("Simulated Sandbox Execution Payload:", attemptPayload);
-      alert("🎉 Simulation Test Complete! All validation engines verified. No historical record logs were appended to your production Firestore collection databases.");
-      setSubmittedAttempt(attemptPayload);
-      setView("review");
+      
+      // FIXED: Safely reset session tokens and pivot directly back to the dashboard context view
+      setActiveTest(null);
+      setSubmittedAttempt(null);
+      setPreviewMode(false);
+      setView("dashboard");
+      
+      alert("🎉 Simulation Test Complete! All validation engines verified. No historical record logs were appended to your production Firestore databases.");
     } else {
       try {
-        const docRef = await addDoc(collection(db, "attempts"), attemptPayload);
-        const attemptWithId = { id: docRef.id, ...attemptPayload };
-        setSubmittedAttempt(attemptWithId);
-        setView("review");
+        // Upload attempt results payload securely to production Firestore environment
+        await addDoc(collection(db, "attempts"), attemptPayload);
+        
+        // FIXED: Instantly break reference attachments to the active exam session parameters.
+        // This fully shifts state view to "dashboard" and drops the attempt review wall completely!
+        setActiveTest(null);
+        setSubmittedAttempt(null);
+        setPreviewMode(false);
+        setView("dashboard");
+        
+        alert("🎉 Exam submitted successfully! Your responses have been securely uploaded.");
       } catch (err) {
         alert("Failed to submit attempt data to cloud server: " + err.message);
       }
