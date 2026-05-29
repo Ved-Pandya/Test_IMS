@@ -2,7 +2,7 @@
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
-import { collection, query, where, getDocs, doc, deleteDoc } from "firebase/firestore"; // <-- Added doc and deleteDoc imports
+import { collection, query, where, getDocs, doc, deleteDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 import TestCreationForm from "./TestCreationForm";
 import TeacherTestDetail from "./TeacherTestDetail";
@@ -90,20 +90,15 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
-  // --- ADDED: CORE ATTEMPT RESET ENGINE ---
   const handleResetStudentAttempt = async (attemptId, studentName) => {
     if (!window.confirm(`⚠️ WARNING: Are you sure you want to reset the exam attempt for ${studentName || "this student"}?\nThis will permanently delete their answers and allow them to retake the test.`)) {
       return;
     }
 
     try {
-      // 1. Permanently remove the target attempt doc row from the cloud database
       await deleteDoc(doc(db, "attempts", attemptId));
-      
-      // 2. Clear from local state so the metrics recalculate and the screen updates instantly
       setSelectedAttempts((prev) => prev.filter((a) => a.id !== attemptId));
       setAllAttempts((prev) => prev.filter((a) => a.id !== attemptId));
-      
       alert("Exam session successfully cleared. The student can now re-enter the test panel.");
     } catch (err) {
       console.error("Error executing reset workflow loop:", err);
@@ -115,6 +110,11 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     setEnrollLoading(true);
     try {
       let uidsToEnroll = [];
+
+      // FIXED: Strict identification check avoids zero-index card reference masking flaws completely
+      if (enrollModal.testId === null || enrollModal.testId === undefined || String(enrollModal.testId).trim() === "") {
+        throw new Error("Missing test reference allocation.");
+      }
 
       if (enrollMode === "batch") {
         if (!batchInput.trim()) throw new Error("Please enter a batch name.");
@@ -138,13 +138,19 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         uidsToEnroll = [snap.docs[0].id];
       }
 
-      await enrollStudents(enrollModal.testId, uidsToEnroll);
+      // Execute enrollment utility layer
+      const updatedRoster = await enrollStudents(enrollModal.testId, uidsToEnroll);
       alert(`Successfully assigned test to ${uidsToEnroll.length} student(s)!`);
       
       setTests((current) =>
-        current.map((t) => t.id === enrollModal.testId ? { ...t, enrolledStudents: Array.from(new Set([...t.enrolledStudents, ...uidsToEnroll])) } : t)
+        current.map((t) => 
+          t.id === enrollModal.testId 
+            ? { ...t, enrolledStudents: updatedRoster || [] } 
+            : t
+        )
       );
       
+      // Cleanly reset everything on completion success
       setEnrollModal({ open: false, testId: null });
       setBatchInput(""); setExamInput(""); setStudentInput("");
     } catch (err) {
@@ -157,7 +163,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading...</div>;
   if (creating) return <TestCreationForm teacherId={profile.uid} teacherName={profile.name} onBack={() => setCreating(false)} onSave={handleCreateTest} />;
   
-  // FIXED: Injected the new handleResetStudentAttempt prop downward into the sub-detail interface block!
   if (selectedTest) {
     return (
       <TeacherTestDetail 
@@ -165,7 +170,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         attempts={attemptsLoading ? [] : selectedAttempts} 
         onBack={() => setSelectedTest(null)} 
         onDemo={() => onDemoTest(selectedTest)}
-        onResetAttempt={handleResetStudentAttempt} // <-- PASSED PROP DOWN HERE
+        onResetAttempt={handleResetStudentAttempt}
       />
     );
   }
@@ -207,7 +212,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             flex: 1 !important; justify-content: center;
           }
           .card-meta-row {
-            flex-wrap: wrap !with-margin; gap: 10px 14px !important;
+            flex-wrap: wrap; gap: 10px 14px !important;
           }
         }
       `}</style>
@@ -255,7 +260,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                 <div className="teacher-card-actions">
                   <Btn variant="ghost" onClick={() => onDemoTest(test)} style={{ fontSize: 13, padding: "8px 14px", border: `1px solid ${C.border}` }}>👁 Preview</Btn>
                   <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 14px" }}>🏆 Board</Btn>
-                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: null })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
+                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
                 </div>
               </Card>
@@ -271,9 +276,9 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             <h2 style={{ fontFamily: font.heading, fontSize: 18, margin: "0 0 16px", color: C.textPrimary }}>Assign Test</h2>
             
             <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 4, marginBottom: 20, overflowX: "auto" }}>
-              <button onClick={() => setEnrollMode("batch")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "batch" ? C.surface : "transparent", color: enrollMode === "batch" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Batch</button>
-              <button onClick={() => setEnrollMode("exam")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "exam" ? C.surface : "transparent", color: enrollMode === "exam" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Exam</button>
-              <button onClick={() => setEnrollMode("individual")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "individual" ? C.surface : "transparent", color: enrollMode === "individual" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>Individual</button>
+              <button type="button" onClick={() => setEnrollMode("batch")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "batch" ? C.surface : "transparent", color: enrollMode === "batch" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Batch</button>
+              <button type="button" onClick={() => setEnrollMode("exam")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "exam" ? C.surface : "transparent", color: enrollMode === "exam" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Exam</button>
+              <button type="button" onClick={() => setEnrollMode("individual")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "individual" ? C.surface : "transparent", color: enrollMode === "individual" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>Individual</button>
             </div>
 
             {enrollMode === "batch" && <Input label="Batch Name" value={batchInput} onChange={setBatchInput} placeholder="e.g. BATCH-A" />}
@@ -294,8 +299,19 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             {enrollMode === "individual" && <Input label="Student Email" type="email" value={studentInput} onChange={setStudentInput} placeholder="student@example.com" />}
 
             <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => setEnrollModal({ open: false, testId: null })} disabled={enrollLoading}>Cancel</Btn>
-              <Btn variant="primary" onClick={handleConfirmEnroll} disabled={enrollLoading}>{enrollLoading ? "Assigning..." : "Confirm"}</Btn>
+              {/* FIXED: Prevent destruction of structural testId tokens during layout closure loops */}
+              <Btn 
+                type="button"
+                variant="ghost" 
+                onClick={() => {
+                  setEnrollModal((prev) => ({ ...prev, open: false }));
+                  setBatchInput(""); setExamInput(""); setStudentInput("");
+                }} 
+                disabled={enrollLoading}
+              >
+                Cancel
+              </Btn>
+              <Btn type="button" variant="primary" onClick={handleConfirmEnroll} disabled={enrollLoading}>{enrollLoading ? "Assigning..." : "Confirm"}</Btn>
             </div>
           </Card>
         </div>

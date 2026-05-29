@@ -8,7 +8,8 @@ import {
   query, 
   where, 
   serverTimestamp, 
-  arrayUnion 
+  arrayUnion,
+  getDoc
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -66,15 +67,41 @@ export async function getStudentTests(studentId) {
 
 /**
  * Adds an array of student IDs to a test's enrolledStudents list.
- * Uses arrayUnion to prevent duplicates and safely append to the existing list.
+ * FIXED: Fallback safety layer ensures missing or broken array paths are initialized properly
  */
 export async function enrollStudents(testId, studentIds) {
-  if (!studentIds || studentIds.length === 0) return;
+  if (!testId) throw new Error("Missing test reference allocation.");
+  if (!studentIds || studentIds.length === 0) return [];
   
-  const testRef = doc(db, "tests", testId);
-  await updateDoc(testRef, {
-    enrolledStudents: arrayUnion(...studentIds)
-  });
+  try {
+    const testRef = doc(db, "tests", testId);
+    const testSnap = await getDoc(testRef);
+
+    if (!testSnap.exists()) {
+      throw new Error("Target evaluation test configuration was not found.");
+    }
+
+    const testData = testSnap.data();
+    
+    // Safety check: Fallback to an empty array if enrolledStudents is missing or null
+    const currentEnrolled = Array.isArray(testData.enrolledStudents) 
+      ? testData.enrolledStudents 
+      : [];
+
+    // Filter out duplicates cleanly via Set macro mapping
+    const updatedEnrollmentSet = new Set([...currentEnrolled, ...studentIds]);
+    const finalizedArray = Array.from(updatedEnrollmentSet);
+
+    // Save back to Firestore database
+    await updateDoc(testRef, {
+      enrolledStudents: finalizedArray
+    });
+
+    return finalizedArray; // Return the exact new enrollment list array for UI updates
+  } catch (err) {
+    console.error("Enrollment pipeline exception:", err);
+    throw err;
+  }
 }
 
 /**
