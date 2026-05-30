@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
-import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
+import { createTest, getTeacherTests, enrollStudents, updateTestPin, deleteTestCompletely } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
 import { collection, query, where, getDocs, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
@@ -92,6 +92,21 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
+  const handleDeleteTest = async (testId, testName) => {
+    if (!window.confirm(`⚠️ DANGER: Are you absolutely sure you want to permanently erase "${testName}"?\n\nThis will completely delete the test configuration AND wipe all student attempts/scores attached to it. This cannot be undone.`)) return;
+    
+    setLoading(true);
+    try {
+      await deleteTestCompletely(testId);
+      setTests((current) => current.filter(t => t.id !== testId));
+      setAllAttempts((current) => current.filter(a => a.testId !== testId));
+    } catch (err) {
+      alert("Failed to execute termination purge: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResetStudentAttempt = async (attemptId, studentName) => {
     if (!window.confirm(`⚠️ WARNING: Are you sure you want to reset the exam attempt for ${studentName || "this student"}?\nThis will permanently delete their answers and allow them to retake the test.`)) {
       return;
@@ -108,7 +123,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
-  // --- EXPORT TRUE EXCEL WORKSHEET (.XLSX) WITH ROSTER PROPERTIES ---
   const handleExportXLSX = async (test) => {
     const testAttempts = allAttempts.filter((a) => a.testId === test.id);
     
@@ -140,7 +154,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         const timeMin = Math.round((att.timeTaken || 0) / 60);
         const violationsCount = att.violations ? att.violations.length : 0;
         
-        // Formulate readable submission modes for administrative visibility
         let submissionMode = "Normal Manual Submission";
         if (att.isAutoSubmitted || att.reason?.includes("Security Integrity")) {
           submissionMode = violationsCount >= 2 
@@ -156,7 +169,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
           "Total Marks": att.total,
           "Accuracy": `${accuracy}%`,
           "Time Taken (min)": timeMin,
-          "Submission Status": submissionMode, // FIXED: Logs auto-submitted values clearly in Excel rows
+          "Submission Status": submissionMode, 
           "Total Tab Violations": violationsCount
         };
       });
@@ -303,7 +316,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
           
           {tests.map((test) => {
             const attemptsForTest = allAttempts.filter((attempt) => attempt.testId === test.id);
-            // FIXED: Scan total attempts checklist to see if any flags have an active auto-submitted violation state
             const containsViolatedSubmissions = attemptsForTest.some(a => a.isAutoSubmitted || a.violations?.length >= 2);
 
             return (
@@ -313,7 +325,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                     <span style={{ fontFamily: font.heading, fontSize: 17, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
                     <Badge color={test.isActive ? "green" : "amber"}>{test.isActive ? "Active" : "Inactive"}</Badge>
                     
-                    {/* FIXED: Dynamic teacher dashboard alert badge if a student gets caught shifting browser planes */}
                     {containsViolatedSubmissions && (
                       <Badge color="red" style={{ fontWeight: 800, animation: "pulse 2s infinite" }}>⚠️ AUTO-SUBMISSIONS DETECTED</Badge>
                     )}
@@ -346,6 +357,13 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                   
                   <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
+                  
+                  <Btn 
+                    onClick={() => handleDeleteTest(test.id, test.title)} 
+                    style={{ background: "#ef4444", color: "#fff", padding: "8px 14px", fontSize: 13, border: "none", opacity: 0.9 }}
+                  >
+                    🗑️ Delete
+                  </Btn>
                 </div>
               </Card>
             );

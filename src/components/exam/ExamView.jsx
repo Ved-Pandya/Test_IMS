@@ -191,8 +191,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     let totalScore = 0;
     const flatQuestions = test.sections.flatMap((s) => s.questions);
     
-    // FIXED: Extremely strict numerical parsing ensures marking inputs cannot become strings 
-    // or negative additions (e.g. subtracting -1 adds 1). We force an absolute positive number.
+    // Extremely strict numerical parsing ensures marking inputs cannot become strings 
     let correctReward = 3;
     if (test.markingScheme && test.markingScheme.correct !== undefined && test.markingScheme.correct !== "") {
         correctReward = Math.abs(Number(test.markingScheme.correct));
@@ -207,7 +206,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 
     flatQuestions.forEach((q) => {
       const studentAns = answers[q.id];
-      // Skip untouched questions entirely
       if (studentAns === undefined || studentAns === null || studentAns === "") return;
 
       let isCorrect = false;
@@ -218,12 +216,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         if (isCorrect) {
           totalScore += correctReward;
         }
-        // Note: TITA typically carries 0 negative marks in standard formats (CAT/CMAT). 
-        // If your custom platform requires TITA penalties, uncomment the line below.
-        // else { totalScore -= incorrectPenalty; }
       } else {
-        // FIXED: Robust MCQ Comparison checks both Index and Text String
-        // In case the DB stored the actual answer word instead of the option array index
         const isIndexMatch = Number(studentAns) === Number(q.correct);
         const selectedOptionText = q.options ? q.options[Number(studentAns)] : null;
         const isTextMatch = selectedOptionText && String(selectedOptionText).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
@@ -233,7 +226,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         if (isCorrect) {
           totalScore += correctReward;
         } else {
-          // Strictly subtracts the absolute penalty integer 
           totalScore -= incorrectPenalty; 
         }
       }
@@ -352,25 +344,34 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           }
           .mobile-drawer-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 17, 23, 0.8); z-index: 200; display: flex; justify-content: flex-end; }
           .mobile-drawer-content { width: 290px; background: ${C.surface}; height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+          
+          /* FIXED: UI Classes to ensure the submit button fits perfectly on small mobile screens */
+          .hide-on-mobile { display: none !important; }
+          .mobile-header-padding { padding: 0 10px !important; gap: 8px !important; }
+          .mobile-header-actions { gap: 6px !important; }
+          .mobile-timer-badge { padding: 4px 8px !important; font-size: 12px !important; }
+          .mobile-submit-btn { padding: 6px 10px !important; font-size: 12px !important; }
         }
       `}</style>
 
-      {/* HEADER ROW */}
-      <div style={{ height: 64, background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: 15, fontFamily: font.heading, fontWeight: 800, color: C.textPrimary, margin: 0, maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{test.title}</h1>
-          <span style={{ fontSize: 11, color: C.textMuted }}>{studentProfile.name.split(" ")[0]}</span>
+      {/* FIXED HEADER ROW: Flexible sizing prevents truncation on tiny screens */}
+      <div className="mobile-header-padding" style={{ height: 64, background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        {/* Left side: Flexible width container forces title to truncate with ... instead of pushing out the submit button */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <h1 style={{ fontSize: 15, fontFamily: font.heading, fontWeight: 800, color: C.textPrimary, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{test.title}</h1>
+          <span className="hide-on-mobile" style={{ fontSize: 11, color: C.textMuted }}>{studentProfile.name.split(" ")[0]}</span>
         </div>
         
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Right side: Fixed width container ensures controls are never squished */}
+        <div className="mobile-header-actions" style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           {warningCount > 0 && (
-            <Badge color="red" style={{ fontWeight: 700 }}>⚠️ VIOLATIONS: {warningCount}/{MAX_ALLOWED_VIOLATIONS}</Badge>
+            <Badge color="red" style={{ fontWeight: 700 }}>⚠️ <span className="hide-on-mobile">VIOLATIONS: </span>{warningCount}/{MAX_ALLOWED_VIOLATIONS}</Badge>
           )}
-          <Badge color={timeLeft < 300 ? "red" : "accent"} style={{ fontSize: 14, padding: "6px 12px", fontFamily: font.mono, fontWeight: 700 }}>
+          <Badge className="mobile-timer-badge" color={timeLeft < 300 ? "red" : "accent"} style={{ fontSize: 14, padding: "6px 12px", fontFamily: font.mono, fontWeight: 700 }}>
             ⏱ {formatTime(timeLeft)}
           </Badge>
-          <Badge color="gray" style={{ fontSize: 11, padding: "4px 8px" }}>Attempted: {attemptedCount}/{flatQuestions.length}</Badge>
-          <Btn onClick={handleManualSubmitTrigger} style={{ background: C.red, color: "#fff", padding: "6px 12px", fontSize: 13, border: "none" }}>Submit</Btn>
+          <Badge className="hide-on-mobile" color="gray" style={{ fontSize: 11, padding: "4px 8px" }}>Attempted: {attemptedCount}/{flatQuestions.length}</Badge>
+          <Btn className="mobile-submit-btn" onClick={handleManualSubmitTrigger} style={{ background: C.red, color: "#fff", padding: "6px 12px", fontSize: 13, border: "none", flexShrink: 0 }}>Submit</Btn>
         </div>
       </div>
 
@@ -588,7 +589,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 }
 
 function PaletteContent({ currentSection, currentQuestionIdx, getQuestionStatus, setCurrentQuestionIdx, test }) {
-  // FIXED: Prevents UI from rendering "--1" if the admin inputted -1 into the database.
   const displayCorrect = test.markingScheme?.correct !== undefined ? Math.abs(Number(test.markingScheme.correct)) : 3;
   const displayIncorrect = test.markingScheme?.incorrect !== undefined ? Math.abs(Number(test.markingScheme.incorrect)) : 1;
 

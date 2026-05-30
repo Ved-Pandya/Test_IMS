@@ -9,13 +9,13 @@ import {
   where, 
   serverTimestamp, 
   arrayUnion,
-  getDoc
+  getDoc,
+  writeBatch // <-- Added writeBatch import
 } from "firebase/firestore";
 import { db } from "./config";
 
 /**
  * Creates a new test and generates a random 4-digit classroom PIN.
- * UPDATED: Now properly accepts and saves the custom markingScheme (+4 / -1)
  */
 export async function createTest({ title, duration, sections, teacherId, createdBy, markingScheme }) {
   const pin = Math.floor(1000 + Math.random() * 9000).toString();
@@ -26,7 +26,6 @@ export async function createTest({ title, duration, sections, teacherId, created
     sections,
     teacherId,
     createdBy,
-    // Safely fallback to +1 / 0 if the teacher doesn't specify one
     markingScheme: markingScheme || { correct: 1, incorrect: 0 }, 
     enrolledStudents: [], 
     isActive: true,
@@ -39,7 +38,6 @@ export async function createTest({ title, duration, sections, teacherId, created
 
 /**
  * Fetches all tests created by a specific teacher for their dashboard.
- * Sorts them so the newest tests appear at the top.
  */
 export async function getTeacherTests(teacherId) {
   const q = query(collection(db, "tests"), where("teacherId", "==", teacherId));
@@ -47,7 +45,6 @@ export async function getTeacherTests(teacherId) {
   
   const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   
-  // Sort by newest first
   return docs.sort((a, b) => {
     const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
     const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
@@ -67,7 +64,6 @@ export async function getStudentTests(studentId) {
 
 /**
  * Adds an array of student IDs to a test's enrolledStudents list.
- * FIXED: Fallback safety layer ensures missing or broken array paths are initialized properly
  */
 export async function enrollStudents(testId, studentIds) {
   if (!testId) throw new Error("Missing test reference allocation.");
@@ -83,21 +79,18 @@ export async function enrollStudents(testId, studentIds) {
 
     const testData = testSnap.data();
     
-    // Safety check: Fallback to an empty array if enrolledStudents is missing or null
     const currentEnrolled = Array.isArray(testData.enrolledStudents) 
       ? testData.enrolledStudents 
       : [];
 
-    // Filter out duplicates cleanly via Set macro mapping
     const updatedEnrollmentSet = new Set([...currentEnrolled, ...studentIds]);
     const finalizedArray = Array.from(updatedEnrollmentSet);
 
-    // Save back to Firestore database
     await updateDoc(testRef, {
       enrolledStudents: finalizedArray
     });
 
-    return finalizedArray; // Return the exact new enrollment list array for UI updates
+    return finalizedArray; 
   } catch (err) {
     console.error("Enrollment pipeline exception:", err);
     throw err;
@@ -105,7 +98,7 @@ export async function enrollStudents(testId, studentIds) {
 }
 
 /**
- * Generates a new random 4-digit PIN for a test to lock out old students.
+ * Generates a new random 4-digit PIN for a test.
  */
 export async function updateTestPin(testId) {
   const newPin = Math.floor(1000 + Math.random() * 9000).toString();
@@ -116,4 +109,27 @@ export async function updateTestPin(testId) {
   });
   
   return newPin;
+}
+
+/**
+ * Safely deletes a test and cascades the deletion to all student attempts attached to it.
+ */
+export async function deleteTestCompletely(testId) {
+  const batch = writeBatch(db);
+
+  // 1. Queue the primary test document for deletion
+  const testRef = doc(db, "tests", testId);
+  batch.delete(testRef);
+
+  // 2. Find and queue ALL student attempts related to this specific test
+  const attemptsQuery = query(collection(db, "attempts"), where("testId", "==", testId));
+  const attemptsSnap = await getDocs(attemptsQuery);
+  
+  attemptsSnap.forEach((docSnap) => {
+    batch.delete(docSnap.ref);
+  });
+
+  // 3. Execute the batch operation atomically
+  await batch.commit();
+  return true;
 }
