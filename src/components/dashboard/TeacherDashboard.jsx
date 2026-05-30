@@ -2,13 +2,12 @@
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
-// FIXED: Added getDoc import to fetch individual student data for the Excel sheet
 import { collection, query, where, getDocs, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 import TestCreationForm from "./TestCreationForm";
 import TeacherTestDetail from "./TeacherTestDetail";
 import LeaderboardModal from "./LeaderboardModal";
-import * as XLSX from "xlsx"; // <-- Added Excel library import
+import * as XLSX from "xlsx"; 
 
 export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [selectedTest, setSelectedTest] = useState(null);
@@ -20,8 +19,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [loading, setLoading] = useState(true);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const [leaderboardModal, setLeaderboardModal] = useState(null);
-  
-  // Track which test is currently generating an Excel sheet
   const [exportingId, setExportingId] = useState(null);
 
   const [enrollModal, setEnrollModal] = useState({ open: false, testId: null });
@@ -111,7 +108,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
-  // --- NEW ROBUST .XLSX EXPORT ENGINE ---
+  // --- EXPORT TRUE EXCEL WORKSHEET (.XLSX) WITH ROSTER PROPERTIES ---
   const handleExportXLSX = async (test) => {
     const testAttempts = allAttempts.filter((a) => a.testId === test.id);
     
@@ -120,10 +117,9 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
       return;
     }
 
-    setExportingId(test.id); // Trigger loading state
+    setExportingId(test.id);
     
     try {
-      // 1. Fetch unique students to gather their Registration Numbers and Batch Data
       const uniqueStudentIds = [...new Set(testAttempts.map(a => a.studentId))];
       const studentDataMap = {};
 
@@ -138,32 +134,37 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         }
       }));
 
-      // 2. Map the data cleanly into JSON objects specifically formatted for Excel columns
       const exportData = testAttempts.map(att => {
         const studentInfo = studentDataMap[att.studentId] || {};
         const accuracy = att.total > 0 ? Math.round((att.score / att.total) * 100) : 0;
         const timeMin = Math.round((att.timeTaken || 0) / 60);
         const violationsCount = att.violations ? att.violations.length : 0;
         
+        // Formulate readable submission modes for administrative visibility
+        let submissionMode = "Normal Manual Submission";
+        if (att.isAutoSubmitted || att.reason?.includes("Security Integrity")) {
+          submissionMode = violationsCount >= 2 
+            ? "Auto-Submitted (Violation Terminated)" 
+            : "Auto-Submitted (Timer Expired)";
+        }
+
         return {
           "Registration Number": studentInfo.regNo || "N/A",
           "Student Name": att.studentName || studentInfo.name || "Unknown",
           "Batch": studentInfo.batch || "N/A",
-          "Score": att.score,
+          "Score Obtained": att.score,
           "Total Marks": att.total,
-          "Accuracy (%)": `${accuracy}%`,
+          "Accuracy": `${accuracy}%`,
           "Time Taken (min)": timeMin,
-          "Submission Type": att.reason || "Manual Run",
-          "Security Violations": violationsCount
+          "Submission Status": submissionMode, // FIXED: Logs auto-submitted values clearly in Excel rows
+          "Total Tab Violations": violationsCount
         };
       });
 
-      // 3. Create the Workbook and Worksheet securely using the xlsx library
       const worksheet = XLSX.utils.json_to_sheet(exportData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Test Results");
 
-      // 4. Trigger download
       XLSX.writeFile(workbook, `${test.title.replace(/\s+/g, '_')}_Results.xlsx`);
       
     } catch (err) {
@@ -277,7 +278,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             flex: 1 !important; justify-content: center;
           }
           .card-meta-row {
-            flex-wrap: wrap; gap: 10px 14px !important;
+            flex-wrap: wrap; gap: 10px 14px !with-margin;
           }
         }
       `}</style>
@@ -302,12 +303,20 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
           
           {tests.map((test) => {
             const attemptsForTest = allAttempts.filter((attempt) => attempt.testId === test.id);
+            // FIXED: Scan total attempts checklist to see if any flags have an active auto-submitted violation state
+            const containsViolatedSubmissions = attemptsForTest.some(a => a.isAutoSubmitted || a.violations?.length >= 2);
+
             return (
               <Card key={test.id} className="teacher-test-card">
                 <div style={{ flex: 1, width: "100%" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: font.heading, fontSize: 17, fontWeight: 700, color: C.textPrimary }}>{test.title}</span>
                     <Badge color={test.isActive ? "green" : "amber"}>{test.isActive ? "Active" : "Inactive"}</Badge>
+                    
+                    {/* FIXED: Dynamic teacher dashboard alert badge if a student gets caught shifting browser planes */}
+                    {containsViolatedSubmissions && (
+                      <Badge color="red" style={{ fontWeight: 800, animation: "pulse 2s infinite" }}>⚠️ AUTO-SUBMISSIONS DETECTED</Badge>
+                    )}
                   </div>
                   
                   <div className="card-meta-row" style={{ fontSize: 13, color: C.textMuted, display: "flex", gap: 18, alignItems: "center" }}>
@@ -326,7 +335,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                   <Btn variant="ghost" onClick={() => onDemoTest(test)} style={{ fontSize: 13, padding: "8px 14px", border: `1px solid ${C.border}` }}>👁 Preview</Btn>
                   <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 14px" }}>🏆 Board</Btn>
                   
-                  {/* UPDATED: Safely calls XLSX generator and displays loading state */}
                   <Btn 
                     variant="ghost" 
                     onClick={() => handleExportXLSX(test)} 

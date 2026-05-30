@@ -164,22 +164,30 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     const flatQuestions = test.sections.flatMap((s) => s.questions);
     const grading = test.markingScheme || { correct: 3, incorrect: 1 };
 
-    flatQuestions.forEach((q) => {
-      const studentAns = answers[q.id];
-      if (studentAns === undefined || studentAns === "") return;
+    // Detect if this submit run was thrown by our anti-cheat proctoring lockout system
+    const isViolatedLock = reasonStr.includes("Security Integrity Limits");
 
-      if (q.type === "tita") {
-        const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
-        if (isCorrect) totalScore += grading.correct;
-      } else {
-        const isCorrect = Number(studentAns) === Number(q.correct);
-        if (isCorrect) {
-          totalScore += grading.correct;
+    if (isViolatedLock) {
+      // FIXED: Enforce absolute zero score limit for tab-switching infractions
+      totalScore = 0;
+    } else {
+      flatQuestions.forEach((q) => {
+        const studentAns = answers[q.id];
+        if (studentAns === undefined || studentAns === "") return;
+
+        if (q.type === "tita") {
+          const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
+          if (isCorrect) totalScore += grading.correct;
         } else {
-          totalScore -= grading.incorrect;
+          const isCorrect = Number(studentAns) === Number(q.correct);
+          if (isCorrect) {
+            totalScore += grading.correct;
+          } else {
+            totalScore -= grading.incorrect;
+          }
         }
-      }
-    });
+      });
+    }
 
     return {
       testId: test.id,
@@ -192,6 +200,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       timeTaken,
       reason: reasonStr,
       violations, 
+      isAutoSubmitted: isViolatedLock || reasonStr.includes("Timer Expired"), // FIXED: Explicit flag added
       submittedAt: new Date(),
     };
   };
