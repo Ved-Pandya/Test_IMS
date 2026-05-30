@@ -16,7 +16,9 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   // --- Proctoring & Anti-Cheating States ---
   const [violations, setViolations] = useState([]); 
   const [warningCount, setWarningCount] = useState(0);
-  const MAX_ALLOWED_VIOLATIONS = 2; 
+  
+  // Hard limits adjusted so warnings happen on 1st and 2nd switch; auto-submits on the 3rd.
+  const MAX_ALLOWED_VIOLATIONS = 3; 
   
   // --- Safe Modal UI States ---
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -26,6 +28,14 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const [terminationReason, setTerminationReason] = useState("");
 
   const isSystemModalOpenRef = useRef(false);
+  const warningCountRef = useRef(0);
+  
+  // FIXED: Time lock reference completely stops double-counting overlapping visibility vs blur loops
+  const lastViolationTimeRef = useRef(0);
+
+  useEffect(() => {
+    warningCountRef.current = warningCount;
+  }, [warningCount]);
   
   // --- Timer Operations Engine ---
   const [timeLeft, setTimeLeft] = useState((test.duration || 120) * 60);
@@ -75,20 +85,39 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       }
     };
 
+    const handleBeforeUnload = (e) => {
+      if (warningCountRef.current + 1 >= MAX_ALLOWED_VIOLATIONS) return;
+      e.preventDefault();
+      e.returnValue = "Warning: Leaving or closing this screen will invalidate your exam progress.";
+      return e.returnValue;
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", handleWindowBlur);
     window.addEventListener("contextmenu", handleContextMenu);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("blur", handleWindowBlur);
       window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [warningCount, violations, showTerminationModal]); 
 
   const triggerProctorViolation = (reasonStr) => {
+    const now = Date.now();
+    
+    // FIXED: If an overlapping browser event fires within 500ms of the last recorded violation, reject it immediately
+    if (now - lastViolationTimeRef.current < 500) {
+      console.log("Proctor engine blocked duplicate concurrent event structure.");
+      return;
+    }
+    
+    lastViolationTimeRef.current = now; // Lock timestamp instantly
+
     const newCount = warningCount + 1;
     const timestamp = new Date().toLocaleTimeString();
     const violationLog = `${timestamp} - ${reasonStr}`;
@@ -98,7 +127,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     setWarningCount(newCount);
 
     if (newCount >= MAX_ALLOWED_VIOLATIONS) {
-      handleAutoSubmit("Exceeded Security Integrity Limits (2nd Violation)");
+      handleAutoSubmit(`Exceeded Security Integrity Limits (${MAX_ALLOWED_VIOLATIONS} Violations)`);
     } else {
       isSystemModalOpenRef.current = true;
       setCurrentWarningReason(reasonStr);
@@ -162,13 +191,14 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const processCalculatedGrading = (reasonStr) => {
     let totalScore = 0;
     const flatQuestions = test.sections.flatMap((s) => s.questions);
-    const grading = test.markingScheme || { correct: 3, incorrect: 1 };
+    
+    // FIXED: Safely parse custom marking scheme values into positive integers, eliminating string concatenation issues
+    const correctReward = Number(test.markingScheme?.correct !== undefined ? Math.abs(test.markingScheme.correct) : 3);
+    const incorrectPenalty = Number(test.markingScheme?.incorrect !== undefined ? Math.abs(test.markingScheme.incorrect) : 1);
 
-    // Detect if this submit run was thrown by our anti-cheat proctoring lockout system
     const isViolatedLock = reasonStr.includes("Security Integrity Limits");
 
     if (isViolatedLock) {
-      // FIXED: Enforce absolute zero score limit for tab-switching infractions
       totalScore = 0;
     } else {
       flatQuestions.forEach((q) => {
@@ -177,13 +207,14 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 
         if (q.type === "tita") {
           const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
-          if (isCorrect) totalScore += grading.correct;
+          if (isCorrect) totalScore += correctReward;
         } else {
           const isCorrect = Number(studentAns) === Number(q.correct);
           if (isCorrect) {
-            totalScore += grading.correct;
+            totalScore += correctReward;
           } else {
-            totalScore -= grading.incorrect;
+            // FIXED: Safely reduces the calculated total score metrics via numerical integer deduction subtraction
+            totalScore -= incorrectPenalty;
           }
         }
       });
@@ -196,11 +227,11 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       studentName: studentProfile.name,
       answers,
       score: totalScore,
-      total: flatQuestions.length * grading.correct,
+      total: flatQuestions.length * correctReward,
       timeTaken,
       reason: reasonStr,
       violations, 
-      isAutoSubmitted: isViolatedLock || reasonStr.includes("Timer Expired"), // FIXED: Explicit flag added
+      isAutoSubmitted: isViolatedLock || reasonStr.includes("Timer Expired"),
       submittedAt: new Date(),
     };
   };
@@ -222,6 +253,13 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     setShowSubmitModal(false);
   };
 
+  const handleConfirmTerminationSubmit = () => {
+    isSystemModalOpenRef.current = false;
+    setShowTerminationModal(false);
+    const payload = processCalculatedGrading(`Auto Submission (${terminationReason})`);
+    onSubmitExam(payload);
+  };
+
   const handleCloseWarningModal = () => {
     isSystemModalOpenRef.current = false;
     setShowWarningModal(false);
@@ -231,13 +269,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     isSystemModalOpenRef.current = true;
     setTerminationReason(reason);
     setShowTerminationModal(true);
-  };
-
-  const handleConfirmTerminationSubmit = () => {
-    isSystemModalOpenRef.current = false;
-    setShowTerminationModal(false);
-    const payload = processCalculatedGrading(`Auto Submission (${terminationReason})`);
-    onSubmitExam(payload);
   };
 
   const getQuestionStatus = (qId) => {
@@ -315,6 +346,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           <Badge color={timeLeft < 300 ? "red" : "accent"} style={{ fontSize: 14, padding: "6px 12px", fontFamily: font.mono, fontWeight: 700 }}>
             ⏱ {formatTime(timeLeft)}
           </Badge>
+          <Badge color="gray" style={{ fontSize: 11, padding: "4px 8px" }}>Attempted: {attemptedCount}/{flatQuestions.length}</Badge>
           <Btn onClick={handleManualSubmitTrigger} style={{ background: C.red, color: "#fff", padding: "6px 12px", fontSize: 13, border: "none" }}>Submit</Btn>
         </div>
       </div>
