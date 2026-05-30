@@ -5,6 +5,9 @@ import { createStudentAsAdmin, createTeacherAsAdmin, updateStudentBatchByEmail }
 import { collection, query, where, getDocs, doc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 
+// FIXED: Small utility helper to delay loop execution, keeping network requests under Firebase Auth throttling limits
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function AdminDashboard({ profile, onLogout }) {
   const [tab, setTab] = useState("students");
   const [loading, setLoading] = useState(false);
@@ -82,7 +85,7 @@ export default function AdminDashboard({ profile, onLogout }) {
           const rawMobile = row.Mobile || row.mobile || row["MobileNo"] || row["Mobile Number"];
           const rawExam = row.Exam || row.exam || row["EXAM"];
 
-          // FIXED: Ultra-flexible batch column scanner maps fields mapping to any variant containing the substring "batch"
+          // Ultra-flexible batch column scanner maps fields mapping to any variant containing the substring "batch"
           let rawBatch = row.BatchNo || row.batchNo || row.Batch || row["Batch No"] || row["BatchNo "];
           if (!rawBatch) {
             const dynamicBatchKey = Object.keys(row).find(key => 
@@ -115,6 +118,9 @@ export default function AdminDashboard({ profile, onLogout }) {
           }
 
           try {
+            // FIXED: Introduces a 350ms delay pace between creation operations to fully prevent auth/too-many-requests errors
+            await sleep(350);
+
             // Standard execution path via admin API orchestration layer
             await createStudentAsAdmin({ 
               name, email, batch, regNo, mobile, exam
@@ -132,7 +138,7 @@ export default function AdminDashboard({ profile, onLogout }) {
             });
             setStudentLogs(prev => [...prev, `✅ Provisioned Enrollee Document: ${email}`]);
           } catch (err) {
-            // FIXED: Intercepts duplicate account errors gracefully and directly rewrites/creates their Firestore data node mapping
+            // Intercepts duplicate account errors gracefully and directly rewrites/creates their Firestore data node mapping
             if (err.message.includes("email-already-in-use") || err.code === "auth/email-already-in-use" || String(err).includes("already-in-use")) {
               try {
                 await setDoc(doc(db, "users", email), {
