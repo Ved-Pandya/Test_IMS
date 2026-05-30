@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { collection, query, where, getDocs, limit } from "firebase/firestore"; // <-- Added limit import
-import { db } from "../../firebase/config";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
+// FIXED: Import your smart custom login orchestrator directly
+import { login } from "../../firebase/auth"; 
 
-export default function AuthScreen({ onLogin }) {
+export default function AuthScreen({ onLoginSuccess }) {
   const [identifier, setIdentifier] = useState(""); 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,38 +20,26 @@ export default function AuthScreen({ onLogin }) {
 
     setLoading(true);
     try {
-      // 1. Clean the inputs
-      // Note: We do NOT use toLowerCase() here because Registration Numbers might contain 
-      // case-sensitive characters (like CAT-2026-A).
       const cleanIdentifier = identifier.trim();
       const cleanPassword = password.trim();
 
-      let targetEmail = cleanIdentifier.toLowerCase(); // Only lowercase if it's an email
-
-      // 2. If the user typed a RegNo instead of an email (it has no '@' symbol)
-      if (!cleanIdentifier.includes("@")) {
-        // Query the users collection to find the hidden email attached to this regNo
-        const q = query(
-          collection(db, "users"), 
-          where("regNo", "==", cleanIdentifier),
-          limit(1) // <-- FIXED: Restricts the query size to instantly satisfy the new security rule!
-        );
-        
-        const snap = await getDocs(q);
-
-        if (snap.empty) {
-          throw new Error("No account found matching this Registration Number.");
-        }
-
-        // Extract the real email from the database to satisfy Firebase Auth
-        targetEmail = snap.docs[0].data().email;
+      // FIXED: Route credentials directly into your updated login function wrapper.
+      // This will handle checking if it's a RegNo or Email, run the lazy JIT signup if 
+      // needed, apply the password length fallback, and return the final authenticated user.
+      const firebaseUser = await login(cleanIdentifier, cleanPassword);
+      
+      // Pass the fully authenticated user object back up to your global app state manager container
+      if (onLoginSuccess) {
+        onLoginSuccess(firebaseUser);
       }
-
-      // 3. Complete auth handshake using the resolved email and their password
-      await onLogin(targetEmail, cleanPassword);
       
     } catch (err) {
-      setError(err.message || "Login Failed. Please check your credentials.");
+      // Clean up common Firebase error strings to keep the UI professional
+      if (err.message.includes("auth/invalid-credential") || err.code === "auth/invalid-credential") {
+        setError("Invalid credentials. Please verify your User ID and password.");
+      } else {
+        setError(err.message || "Login Failed. Please check your credentials.");
+      }
     } finally {
       setLoading(false);
     }
