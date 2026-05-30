@@ -22,8 +22,69 @@ const firebaseConfig = {
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAdminApp");
 const secondaryAuth = getAuth(secondaryApp);
 
-export async function login(email, password) {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
+// FIXED: Smart Just-In-Time login intercept handles both Registration Numbers and normal emails flawlessly
+export async function login(identifier, password) {
+  const cleanInput = String(identifier || "").trim();
+  const cleanPassword = String(password || "").trim();
+
+  if (!cleanInput || !cleanPassword) {
+    throw new Error("Credentials cannot be processed empty.");
+  }
+
+  // Path A: If logging in using a plain email string (Admins / Teachers)
+  if (cleanInput.includes("@")) {
+    const cred = await signInWithEmailAndPassword(auth, cleanInput.toLowerCase(), cleanPassword);
+    return cred.user;
+  }
+
+  // Path B: If logging in using a Student Registration Number
+  // Look up their account record sheet across the indexed registry collections mapping
+  const studentQuery = query(
+    collection(db, "users"), 
+    where("role", "==", "student"), 
+    where("regNo", "==", cleanInput)
+  );
+  const snap = await getDocs(studentQuery);
+
+  if (snap.empty) {
+    throw new Error("Invalid Registration Number. No matching student profile found.");
+  }
+
+  const studentDoc = snap.docs[0];
+  const studentData = studentDoc.data();
+  const studentEmail = studentData.email;
+
+  // INTERCEPT: If this is their very first login under the fast lazy provisioning method
+  if (studentData.isAuthProvisioned === false) {
+    console.log("Lazy Provision Engine Intercept: Creating live authentication node parameters...");
+    try {
+      // 1. Instantly register their account credentials inside Firebase Auth
+      const newCred = await createUserWithEmailAndPassword(auth, studentEmail, cleanPassword);
+      
+      // 2. Safely sync their brand new authenticating unique tracking UID back to Firestore
+      await updateDoc(doc(db, "users", studentEmail), {
+        uid: newCred.user.uid,
+        isAuthProvisioned: true,
+        activatedAt: new Date()
+      });
+
+      return newCred.user;
+    } catch (authErr) {
+      // Fallback fallback handler path catches edge-case race conditions securely
+      if (authErr.code === "auth/email-already-in-use" || authErr.message?.includes("already-in-use")) {
+        const fallbackCred = await signInWithEmailAndPassword(auth, studentEmail, cleanPassword);
+        await updateDoc(doc(db, "users", studentEmail), {
+          uid: fallbackCred.user.uid,
+          isAuthProvisioned: true
+        });
+        return fallbackCred.user;
+      }
+      throw authErr;
+    }
+  }
+
+  // Path C: Standard verified subsequent authentications path handshake
+  const cred = await signInWithEmailAndPassword(auth, studentEmail, cleanPassword);
   return cred.user;
 }
 
@@ -32,22 +93,26 @@ export async function logout() {
 }
 
 export async function getUserProfile(uid, email = null) {
-  // 1. If an email hint is present, check it immediately (Fastest path for new architecture)
   if (email) {
     const emailSnap = await getDoc(doc(db, "users", email.toLowerCase().trim()));
     if (emailSnap.exists()) return emailSnap.data();
   }
 
-  // 2. Check if uid itself is a plain email string
   if (uid && uid.includes("@")) {
     const snap = await getDoc(doc(db, "users", uid.toLowerCase().trim()));
     if (snap.exists()) return snap.data();
   }
   
-  // 3. Look up via user UID directly (Path for manually seeded accounts)
   if (uid) {
     const snap = await getDoc(doc(db, "users", uid));
     if (snap.exists()) return snap.data();
+  }
+
+  // Fallback scanner handles users indexed by email key mapping structures
+  if (uid) {
+    const q = query(collection(db, "users"), where("uid", "==", uid));
+    const snap = await getDocs(q);
+    if (!snap.empty) return snap.docs[0].data();
   }
 
   throw new Error("User profile not found inside index mapping reference.");
@@ -57,7 +122,6 @@ export function subscribeToAuth(callback) {
   return onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
       try {
-        // FIXED: Passes both the UID and the email string to guarantee a clean getDoc path
         const profile = await getUserProfile(firebaseUser.uid, firebaseUser.email);
         callback({ user: firebaseUser, profile });
       } catch (err) {
@@ -74,10 +138,8 @@ export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, 
   const cleanEmail = email.trim().toLowerCase();
   const cleanPassword = regNo.trim();
 
-  const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
-  
+  // Left as a reference endpoint method node for standard individual seeding mechanics
   await setDoc(doc(db, "users", cleanEmail), {
-    uid: cred.user.uid,
     email: cleanEmail,
     name: name.trim(),
     role: "student",
@@ -85,10 +147,10 @@ export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, 
     regNo: cleanPassword,
     mobile: mobile || "N/A",
     exam: exam || "Unassigned",
+    isAuthProvisioned: false,
     createdAt: new Date(),
-  });
+  }, { merge: true });
 
-  await signOut(secondaryAuth);
   return { email: cleanEmail, password: cleanPassword, regNo: cleanPassword, status: "Success" };
 }
 
@@ -106,7 +168,7 @@ export async function createTeacherAsAdmin({ email, name, exams }) {
     exams: exams || [],
     regNo: defaultTeacherPassword,
     createdAt: new Date(),
-  });
+  }, { merge: true });
 
   await signOut(secondaryAuth);
   return { email: cleanEmail, password: defaultTeacherPassword, name, role: "teacher" };
