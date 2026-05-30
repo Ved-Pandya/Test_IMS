@@ -22,7 +22,7 @@ const firebaseConfig = {
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAdminApp");
 const secondaryAuth = getAuth(secondaryApp);
 
-// FIXED: Smart Just-In-Time login intercept handles both Registration Numbers and normal emails flawlessly
+// JIT login intercept handles both Registration Numbers and normal emails flawlessly
 export async function login(identifier, password) {
   const cleanInput = String(identifier || "").trim();
   const cleanPassword = String(password || "").trim();
@@ -38,7 +38,6 @@ export async function login(identifier, password) {
   }
 
   // Path B: If logging in using a Student Registration Number
-  // Look up their account record sheet across the indexed registry collections mapping
   const studentQuery = query(
     collection(db, "users"), 
     where("role", "==", "student"), 
@@ -54,14 +53,18 @@ export async function login(identifier, password) {
   const studentData = studentDoc.data();
   const studentEmail = studentData.email;
 
-  // INTERCEPT: If this is their very first login under the fast lazy provisioning method
+  // FIXED: Ensure our programmatic password string satisfies the minimum length requirement (> 6 characters)
+  // to prevent the identitytoolkit 400 Bad Request error shown in image_4dbfee.png
+  const runtimeAuthPassword = cleanPassword.length < 6 ? `${cleanPassword}@portal` : cleanPassword;
+
+  // INTERCEPT: First-time login path under lazy provisioning method
   if (studentData.isAuthProvisioned === false) {
     console.log("Lazy Provision Engine Intercept: Creating live authentication node parameters...");
     try {
-      // 1. Instantly register their account credentials inside Firebase Auth
-      const newCred = await createUserWithEmailAndPassword(auth, studentEmail, cleanPassword);
+      // 1. Register account credentials inside Firebase Auth safely using length-sanatized key parameters
+      const newCred = await createUserWithEmailAndPassword(auth, studentEmail, runtimeAuthPassword);
       
-      // 2. Safely sync their brand new authenticating unique tracking UID back to Firestore
+      // 2. Sync authenticating tracking UID back to Firestore
       await updateDoc(doc(db, "users", studentEmail), {
         uid: newCred.user.uid,
         isAuthProvisioned: true,
@@ -70,9 +73,9 @@ export async function login(identifier, password) {
 
       return newCred.user;
     } catch (authErr) {
-      // Fallback fallback handler path catches edge-case race conditions securely
+      // Fallback path catches edge-case race conditions securely
       if (authErr.code === "auth/email-already-in-use" || authErr.message?.includes("already-in-use")) {
-        const fallbackCred = await signInWithEmailAndPassword(auth, studentEmail, cleanPassword);
+        const fallbackCred = await signInWithEmailAndPassword(auth, studentEmail, runtimeAuthPassword);
         await updateDoc(doc(db, "users", studentEmail), {
           uid: fallbackCred.user.uid,
           isAuthProvisioned: true
@@ -84,7 +87,7 @@ export async function login(identifier, password) {
   }
 
   // Path C: Standard verified subsequent authentications path handshake
-  const cred = await signInWithEmailAndPassword(auth, studentEmail, cleanPassword);
+  const cred = await signInWithEmailAndPassword(auth, studentEmail, runtimeAuthPassword);
   return cred.user;
 }
 
@@ -108,7 +111,6 @@ export async function getUserProfile(uid, email = null) {
     if (snap.exists()) return snap.data();
   }
 
-  // Fallback scanner handles users indexed by email key mapping structures
   if (uid) {
     const q = query(collection(db, "users"), where("uid", "==", uid));
     const snap = await getDocs(q);
@@ -138,7 +140,6 @@ export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, 
   const cleanEmail = email.trim().toLowerCase();
   const cleanPassword = regNo.trim();
 
-  // Left as a reference endpoint method node for standard individual seeding mechanics
   await setDoc(doc(db, "users", cleanEmail), {
     email: cleanEmail,
     name: name.trim(),
