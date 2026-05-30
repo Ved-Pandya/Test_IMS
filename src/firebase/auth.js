@@ -7,7 +7,8 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
+// FIXED: Added 'limit' to the firestore imports
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, limit } from "firebase/firestore";
 import { auth, db } from "./config";
 
 const firebaseConfig = {
@@ -41,7 +42,8 @@ export async function login(identifier, password) {
   const studentQuery = query(
     collection(db, "users"), 
     where("role", "==", "student"), 
-    where("regNo", "==", cleanInput)
+    where("regNo", "==", cleanInput),
+    limit(1) // FIXED: Added limit(1) to satisfy Firestore unauthenticated read rules!
   );
   const snap = await getDocs(studentQuery);
 
@@ -53,15 +55,14 @@ export async function login(identifier, password) {
   const studentData = studentDoc.data();
   const studentEmail = studentData.email;
 
-  // FIXED: Ensure our programmatic password string satisfies the minimum length requirement (> 6 characters)
-  // to prevent the identitytoolkit 400 Bad Request error shown in image_4dbfee.png
+  // Ensure programmatic password string satisfies the minimum length requirement (> 6 characters)
   const runtimeAuthPassword = cleanPassword.length < 6 ? `${cleanPassword}@portal` : cleanPassword;
 
   // INTERCEPT: First-time login path under lazy provisioning method
   if (studentData.isAuthProvisioned === false) {
     console.log("Lazy Provision Engine Intercept: Creating live authentication node parameters...");
     try {
-      // 1. Register account credentials inside Firebase Auth safely using length-sanatized key parameters
+      // 1. Register account credentials inside Firebase Auth safely
       const newCred = await createUserWithEmailAndPassword(auth, studentEmail, runtimeAuthPassword);
       
       // 2. Sync authenticating tracking UID back to Firestore
@@ -112,7 +113,7 @@ export async function getUserProfile(uid, email = null) {
   }
 
   if (uid) {
-    const q = query(collection(db, "users"), where("uid", "==", uid));
+    const q = query(collection(db, "users"), where("uid", "==", uid), limit(1));
     const snap = await getDocs(q);
     if (!snap.empty) return snap.docs[0].data();
   }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
-// FIXED: Import your smart custom login orchestrator directly
 import { login } from "../../firebase/auth"; 
 
 export default function AuthScreen({ onLoginSuccess }) {
@@ -23,18 +22,13 @@ export default function AuthScreen({ onLoginSuccess }) {
       const cleanIdentifier = identifier.trim();
       const cleanPassword = password.trim();
 
-      // FIXED: Route credentials directly into your updated login function wrapper.
-      // This will handle checking if it's a RegNo or Email, run the lazy JIT signup if 
-      // needed, apply the password length fallback, and return the final authenticated user.
       const firebaseUser = await login(cleanIdentifier, cleanPassword);
       
-      // Pass the fully authenticated user object back up to your global app state manager container
       if (onLoginSuccess) {
         onLoginSuccess(firebaseUser);
       }
       
     } catch (err) {
-      // Clean up common Firebase error strings to keep the UI professional
       if (err.message.includes("auth/invalid-credential") || err.code === "auth/invalid-credential") {
         setError("Invalid credentials. Please verify your User ID and password.");
       } else {
