@@ -1,12 +1,9 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
-import { createStudentAsAdmin, createTeacherAsAdmin, updateStudentBatchByEmail } from "../../firebase/auth";
+import { createTeacherAsAdmin, updateStudentBatchByEmail } from "../../firebase/auth";
 import { collection, query, where, getDocs, doc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
-
-// FIXED: Small utility helper to delay loop execution, keeping network requests under Firebase Auth throttling limits
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function AdminDashboard({ profile, onLogout }) {
   const [tab, setTab] = useState("students");
@@ -59,7 +56,7 @@ export default function AdminDashboard({ profile, onLogout }) {
     setTExams(prev => prev.includes(exam) ? prev.filter(e => e !== exam) : [...prev, exam]);
   };
 
-  // --- REFACTORED BULK ENROLLMENT PARSER WITH HIGH TOLERANCE NORMALIZATION ---
+  // --- REFACTORED BULK ENROLLMENT PARSER VIA DIRECT FIRESTORE INGESTION ---
   const handleStudentUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -118,13 +115,19 @@ export default function AdminDashboard({ profile, onLogout }) {
           }
 
           try {
-            // FIXED: Introduces a 350ms delay pace between creation operations to fully prevent auth/too-many-requests errors
-            await sleep(2200);
-
-            // Standard execution path via admin API orchestration layer
-            await createStudentAsAdmin({ 
-              name, email, batch, regNo, mobile, exam
-            });
+            // FIXED: Bypasses client-side Auth rate limits entirely by writing straight to Firestore.
+            // Accounts will automatically initialize dynamically the exact millisecond they log in.
+            await setDoc(doc(db, "users", email), {
+              email,
+              name,
+              regNo,
+              mobile: mobile || "N/A",
+              batch: batch || "Unassigned",
+              exam: exam || "Unassigned",
+              role: "student",
+              isAuthProvisioned: false, // Flag signals login routine to handle Just-in-Time auth creation
+              updatedAt: new Date()
+            }, { merge: true });
             
             results.push({
               "Registration No": regNo,
@@ -136,49 +139,14 @@ export default function AdminDashboard({ profile, onLogout }) {
               "Exam": exam,
               "Status": "Success"
             });
-            setStudentLogs(prev => [...prev, `✅ Provisioned Enrollee Document: ${email}`]);
+            setStudentLogs(prev => [...prev, `✅ Provisioned Firestore Document Profile: ${email}`]);
           } catch (err) {
-            // Intercepts duplicate account errors gracefully and directly rewrites/creates their Firestore data node mapping
-            if (err.message.includes("email-already-in-use") || err.code === "auth/email-already-in-use" || String(err).includes("already-in-use")) {
-              try {
-                await setDoc(doc(db, "users", email), {
-                  email: email,
-                  name: name,
-                  role: "student",
-                  batch: batch || "Unassigned",
-                  regNo: regNo,
-                  mobile: mobile || "N/A",
-                  exam: exam || "Unassigned",
-                  updatedAt: new Date(),
-                }, { merge: true });
-
-                results.push({
-                  "Registration No": regNo,
-                  "Name": name,
-                  "Email": email,
-                  "Password": regNo, 
-                  "Mobile": mobile,
-                  "Batch": batch || "Unassigned",
-                  "Exam": exam,
-                  "Status": "Success (Linked profile data)"
-                });
-                setStudentLogs(prev => [...prev, `⚠️ Handled duplication link path safely for: ${email}`]);
-              } catch (fsErr) {
-                results.push({
-                  "Registration No": regNo, "Name": name, "Email": email,
-                  "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
-                  "Status": `Error: ${fsErr.message}`
-                });
-                setStudentLogs(prev => [...prev, `❌ Firestore tracking link breakdown ${email}: ${fsErr.message}`]);
-              }
-            } else {
-              results.push({
-                "Registration No": regNo, "Name": name, "Email": email,
-                "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
-                "Status": `Error: ${err.message}`
-              });
-              setStudentLogs(prev => [...prev, `❌ Compilation Drop ${email}: ${err.message}`]);
-            }
+            results.push({
+              "Registration No": regNo, "Name": name, "Email": email,
+              "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
+              "Status": `Error: ${err.message}`
+            });
+            setStudentLogs(prev => [...prev, `❌ Firestore tracking database write drop for ${email}: ${err.message}`]);
           }
         }
 
@@ -189,7 +157,7 @@ export default function AdminDashboard({ profile, onLogout }) {
         setStudentLogs(prev => [...prev, "🎉 Operational complete! Credentials workbook spreadsheet downloaded."]);
       } catch (err) {
         setStudentLogs(prev => [...prev, `Critical Core Parse Exception Error: ${err.message}`]);
-      } finally {
+      } report: {
         setLoading(false);
         e.target.value = ""; 
       }
@@ -197,7 +165,7 @@ export default function AdminDashboard({ profile, onLogout }) {
     reader.readAsArrayBuffer(file);
   };
 
-  // --- INDIVIDUAL ACCOUNT PROVISIONS ---
+  // --- INDIVIDUAL ACCOUNT PROVISIONS VIA FIRESTORE DIRECT INGESTION ---
   const handleAddSingleStudent = async () => {
     if (!sName || !sEmail || !sBatch || !sRegNo || !sMobile || !sExam) {
       return alert("All fields are strictly mandatory for processing individual enrollees.");
@@ -205,16 +173,21 @@ export default function AdminDashboard({ profile, onLogout }) {
     
     setLoading(true);
     try {
-      await createStudentAsAdmin({ 
+      const cleanEmail = sEmail.trim().toLowerCase();
+      const cleanRegNo = sRegNo.trim();
+
+      await setDoc(doc(db, "users", cleanEmail), {
         name: sName.trim(), 
-        email: sEmail.trim().toLowerCase(), 
+        email: cleanEmail, 
         batch: sBatch.trim(), 
-        regNo: sRegNo.trim(), 
+        regNo: cleanRegNo, 
         mobile: sMobile.trim(),
-        exam: sExam.trim()
-      });
+        exam: sExam.trim(),
+        role: "student",
+        isAuthProvisioned: false
+      }, { merge: true });
       
-      setSingleStudentCreds({ email: sEmail.trim().toLowerCase(), password: sRegNo.trim() });
+      setSingleStudentCreds({ email: cleanEmail, password: cleanRegNo });
       
       setSName(""); setSEmail(""); setSBatch(""); 
       setSRegNo(""); setSMobile(""); setSExam("");
