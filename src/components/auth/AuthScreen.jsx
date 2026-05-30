@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { doc, getDoc } from "firebase/firestore"; 
+import { collection, query, where, getDocs } from "firebase/firestore"; 
 import { db } from "../../firebase/config";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
 
 export default function AuthScreen({ onLogin }) {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState(""); // Replaced 'email' with a generic identifier
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -13,39 +13,41 @@ export default function AuthScreen({ onLogin }) {
     if (e) e.preventDefault();
     setError("");
     
-    if (!email.trim() || !password.trim()) {
-      setError("Please enter both email and password.");
+    if (!identifier.trim() || !password.trim()) {
+      setError("Please enter your Registration Number and Password.");
       return;
     }
 
     setLoading(true);
     try {
-      const normalizedEmail = email.trim().toLowerCase();
+      const cleanIdentifier = identifier.trim().toLowerCase();
       const cleanPassword = password.trim();
 
-      // Direct document path fetch - matches "allow get: if true" flawlessly
-      const userDocRef = doc(db, "users", normalizedEmail);
-      const userSnapshot = await getDoc(userDocRef);
+      let targetEmail = cleanIdentifier;
 
-      if (!userSnapshot.exists()) {
-        throw new Error("No account found matching this Email ID.");
+      // If the user typed a RegNo instead of an email (it has no '@' symbol)
+      if (!cleanIdentifier.includes("@")) {
+        // Query the users collection to find the hidden email attached to this regNo
+        const q = query(
+          collection(db, "users"), 
+          where("regNo", "==", cleanIdentifier)
+        );
+        
+        const snap = await getDocs(q);
+
+        if (snap.empty) {
+          throw new Error("No account found matching this Registration Number.");
+        }
+
+        // Extract the real email from the database to satisfy Firebase Auth
+        targetEmail = snap.docs[0].data().email;
       }
 
-      const userData = userSnapshot.data();
-      const storedRegistrationPassword = userData.regNo || userData.passwordCredentialBackup;
-
-      if (!storedRegistrationPassword || String(storedRegistrationPassword).trim() !== cleanPassword) {
-        throw new Error("Invalid password. Please enter your official Registration Number / Employee ID.");
-      }
-
-      if (userData.role === "revoked") {
-        throw new Error("This profile console access has been suspended.");
-      }
-
-      await onLogin(normalizedEmail, cleanPassword);
+      // Complete auth handshake using the resolved email and their password
+      await onLogin(targetEmail, cleanPassword);
       
     } catch (err) {
-      setError(err.message || "Login Failed.");
+      setError(err.message || "Login Failed. Please check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -63,8 +65,9 @@ export default function AuthScreen({ onLogin }) {
         <Card>
           <h2 style={{ margin: "0 0 20px 0", fontSize: 18, color: C.textPrimary, textAlign: "center" }}>Sign In</h2>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <Input label="Email Address" type="email" value={email} onChange={setEmail} placeholder="Enter your registered email" />
-            <Input label="Registration Number / Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
+            {/* Input changed to accept either RegNo or Email */}
+            <Input label="Registration Number (User ID)" type="text" value={identifier} onChange={setIdentifier} placeholder="Enter your Registration No." />
+            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
 
             <Btn type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 8, padding: "12px" }}>
               {loading ? "Authenticating..." : "Secure Login →"}
