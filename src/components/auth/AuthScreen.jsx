@@ -69,7 +69,7 @@ export default function AuthScreen({ onLogin }) {
         <Card>
           <h2 style={{ margin: "0 0 20px 0", fontSize: 18, color: C.textPrimary, textAlign: "center" }}>Sign In</h2>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <Input label="Registration Number (User ID)" type="text" value={identifier} onChange={setIdentifier} placeholder="Enter your Registration No." />
+            <Input label="IMS Pin (User ID)" type="text" value={identifier} onChange={setIdentifier} placeholder="Enter your IMS Pin" />
             <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
 
             <Btn type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 8, padding: "12px" }}>

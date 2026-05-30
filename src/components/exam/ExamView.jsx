@@ -16,7 +16,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   // --- Proctoring & Anti-Cheating States ---
   const [violations, setViolations] = useState([]); 
   const [warningCount, setWarningCount] = useState(0);
-  const MAX_ALLOWED_VIOLATIONS = 2; // Hard-lock terminal submission on the 2nd violation
+  const MAX_ALLOWED_VIOLATIONS = 2; 
   
   // --- Safe Modal UI States ---
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -25,15 +25,12 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const [showTerminationModal, setShowTerminationModal] = useState(false);
   const [terminationReason, setTerminationReason] = useState("");
 
-  // A mutable reference to track modal visibility status dynamically without triggering re-renders
-  // This completely stops window blur events from tripping security checks while a system prompt is active
   const isSystemModalOpenRef = useRef(false);
   
   // --- Timer Operations Engine ---
   const [timeLeft, setTimeLeft] = useState((test.duration || 120) * 60);
   const [timeTaken, setTimeTaken] = useState(0);
 
-  // --- Core Timer Effect ---
   useEffect(() => {
     if (timeLeft <= 0) {
       handleAutoSubmit("Timer Expired");
@@ -48,7 +45,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 
   // --- STRICT PROCTORING ENGINE SECURITY LAYER ---
   useEffect(() => {
-    // 1. Intercept Visibility Changes (Tab Switching / Minimizing)
     const handleVisibilityChange = () => {
       if (document.hidden) {
         if (isSystemModalOpenRef.current && showTerminationModal) return;
@@ -56,10 +52,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       }
     };
 
-    // 2. Intercept Window Blur (Clicking outside browser / alt-tabbing / loss of focal plane)
     const handleWindowBlur = () => {
-      // PROTECTIVE GAP CLOSURE: If a custom React modal panel is intentionally open,
-      // skip execution to avoid throwing false violation warning logs.
       if (isSystemModalOpenRef.current) {
         console.log("Proctoring focus monitor paused: Active session dialog open.");
         return;
@@ -67,12 +60,10 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       triggerProctorViolation("Left the active exam window focus area");
     };
 
-    // 3. Prevent Right-Click Context Menu
     const handleContextMenu = (e) => {
       e.preventDefault();
     };
 
-    // 4. Block Keyboard Cheating Combinations
     const handleKeyDown = (e) => {
       if (
         (e.ctrlKey && e.key === "c") || 
@@ -109,7 +100,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     if (newCount >= MAX_ALLOWED_VIOLATIONS) {
       handleAutoSubmit("Exceeded Security Integrity Limits (2nd Violation)");
     } else {
-      // Display focus-safe UI warnings instead of thread-blocking alert() boxes
       isSystemModalOpenRef.current = true;
       setCurrentWarningReason(reasonStr);
       setShowWarningModal(true);
@@ -207,7 +197,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   };
 
   const handleManualSubmitTrigger = () => {
-    // Activate proctor bypass and mount manual confirm sheet overlay
     isSystemModalOpenRef.current = true;
     setShowSubmitModal(true);
   };
@@ -252,6 +241,11 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     return "gray";
   };
 
+  const setQuestionAndCloseMobile = (idx) => {
+    setCurrentQuestionIdx(idx);
+    setMobilePaletteOpen(false);
+  };
+
   const hasPassage = currentQuestion?.passage && currentQuestion.passage.trim().length > 0;
   const flatQuestions = test.sections.flatMap((s) => s.questions);
   const attemptedCount = Object.keys(answers).filter(k => answers[k] !== undefined && answers[k] !== "").length;
@@ -267,6 +261,10 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         .desktop-right-rail { display: flex; }
         .mobile-palette-toggle-bar { display: none; }
         
+        .passage-box {
+          max-height: 100%;
+        }
+        
         @media (max-width: 768px) {
           .exam-layout-grid { grid-template-columns: 1fr !important; }
           .workspace-split-pane {
@@ -275,6 +273,10 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
             overflow-y: auto !important;
             max-height: calc(100vh - 210px) !important;
             gap: 16px;
+          }
+          .passage-box {
+            min-height: 240px;
+            max-height: 40vh;
           }
           .desktop-right-rail { display: none !important; }
           .mobile-palette-toggle-bar {
@@ -318,7 +320,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           };
           return (
             <button
-              key={sec.id}
+              key={sec.id || idx}
               onTouchStart={changeSection}
               onClick={changeSection}
               style={{
@@ -353,7 +355,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           <div className="workspace-split-pane" style={{ height: "100%", maxHeight: "calc(100vh - 180px)", overflow: "hidden" }}>
             
             {hasPassage && (
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, overflowY: "auto", maxHeight: "100%", lineHeight: 1.6 }}>
+              <div className="passage-box" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, overflowY: "auto", lineHeight: 1.6 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: C.accentText, display: "block", marginBottom: 12, textTransform: "uppercase" }}>Reading Comprehension Passage</span>
                 <div style={{ color: C.textPrimary, fontSize: 14, whiteSpace: "pre-wrap" }}>
                   {currentQuestion.passage}
@@ -519,11 +521,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 
     </div>
   );
-
-  function setQuestionAndCloseMobile(idx) {
-    setCurrentQuestionIdx(idx);
-    setMobilePaletteOpen(false);
-  }
 }
 
 function PaletteContent({ currentSection, currentQuestionIdx, getQuestionStatus, setCurrentQuestionIdx, test }) {
@@ -557,7 +554,7 @@ function PaletteContent({ currentSection, currentQuestionIdx, getQuestionStatus,
 
             return (
               <button
-                key={q.id}
+                key={q.id || idx}
                 onClick={() => setCurrentQuestionIdx(idx)}
                 style={{
                   width: 36, height: 36, borderRadius: 6,
