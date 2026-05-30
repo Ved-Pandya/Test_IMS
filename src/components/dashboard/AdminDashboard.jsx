@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createStudentAsAdmin, createTeacherAsAdmin, updateStudentBatchByEmail } from "../../firebase/auth";
-import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 
 export default function AdminDashboard({ profile, onLogout }) {
@@ -80,27 +80,42 @@ export default function AdminDashboard({ profile, onLogout }) {
           const rawName = row.Name || row.name || row["NAME"] || row["Student Name"];
           const rawRegNo = row.RegNo || row.regNo || row["RegNo "] || row["Registration No"] || row["Registration Number"] || row["RegistrationNo"];
           const rawMobile = row.Mobile || row.mobile || row["MobileNo"] || row["Mobile Number"];
-          const rawBatch = row.BatchNo || row.batchNo || row.Batch || row["Batch No"] || row["BatchNo "];
           const rawExam = row.Exam || row.exam || row["EXAM"];
+
+          // FIXED: Ultra-flexible batch column scanner maps fields mapping to any variant containing the substring "batch"
+          let rawBatch = row.BatchNo || row.batchNo || row.Batch || row["Batch No"] || row["BatchNo "];
+          if (!rawBatch) {
+            const dynamicBatchKey = Object.keys(row).find(key => 
+              key.toLowerCase().replace(/[^a-z0-9]/g, "").includes("batch")
+            );
+            if (dynamicBatchKey) {
+              rawBatch = row[dynamicBatchKey];
+            }
+          }
 
           const email = String(rawEmail || "").trim().toLowerCase();
           const name = String(rawName || "").trim();
           const regNo = String(rawRegNo || "").trim();
           const mobile = String(rawMobile || "").trim();
-          const batch = String(rawBatch || "").trim();
           const exam = String(rawExam || "").trim();
+          
+          let batch = String(rawBatch || "").trim();
+          if (batch.toLowerCase() === "undefined" || batch.toLowerCase() === "null") {
+            batch = "";
+          }
 
-          if (!email || email === "undefined" || !name || name === "undefined") {
+          if (!email || email === "" || !name || name === "") {
             setStudentLogs(prev => [...prev, `⚠️ Skipped line row segment: Missing operational Name or Email keys.`]);
             continue;
           }
 
-          if (!regNo || regNo === "undefined") {
+          if (!regNo || regNo === "") {
             setStudentLogs(prev => [...prev, `⚠️ Skipped ${email}: Registration Number configuration column cell is empty.`]);
             continue;
           }
 
           try {
+            // Standard execution path via admin API orchestration layer
             await createStudentAsAdmin({ 
               name, email, batch, regNo, mobile, exam
             });
@@ -111,18 +126,53 @@ export default function AdminDashboard({ profile, onLogout }) {
               "Email": email,
               "Password": regNo, 
               "Mobile": mobile,
-              "Batch": batch,
+              "Batch": batch || "Unassigned",
               "Exam": exam,
               "Status": "Success"
             });
             setStudentLogs(prev => [...prev, `✅ Provisioned Enrollee Document: ${email}`]);
           } catch (err) {
-            results.push({
-              "Registration No": regNo, "Name": name, "Email": email,
-              "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
-              "Status": `Error: ${err.message}`
-            });
-            setStudentLogs(prev => [...prev, `❌ Compilation Drop ${email}: ${err.message}`]);
+            // FIXED: Intercepts duplicate account errors gracefully and directly rewrites/creates their Firestore data node mapping
+            if (err.message.includes("email-already-in-use") || err.code === "auth/email-already-in-use" || String(err).includes("already-in-use")) {
+              try {
+                await setDoc(doc(db, "users", email), {
+                  email: email,
+                  name: name,
+                  role: "student",
+                  batch: batch || "Unassigned",
+                  regNo: regNo,
+                  mobile: mobile || "N/A",
+                  exam: exam || "Unassigned",
+                  updatedAt: new Date(),
+                }, { merge: true });
+
+                results.push({
+                  "Registration No": regNo,
+                  "Name": name,
+                  "Email": email,
+                  "Password": regNo, 
+                  "Mobile": mobile,
+                  "Batch": batch || "Unassigned",
+                  "Exam": exam,
+                  "Status": "Success (Linked profile data)"
+                });
+                setStudentLogs(prev => [...prev, `⚠️ Handled duplication link path safely for: ${email}`]);
+              } catch (fsErr) {
+                results.push({
+                  "Registration No": regNo, "Name": name, "Email": email,
+                  "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
+                  "Status": `Error: ${fsErr.message}`
+                });
+                setStudentLogs(prev => [...prev, `❌ Firestore tracking link breakdown ${email}: ${fsErr.message}`]);
+              }
+            } else {
+              results.push({
+                "Registration No": regNo, "Name": name, "Email": email,
+                "Password": "-", "Mobile": mobile, "Batch": batch, "Exam": exam,
+                "Status": `Error: ${err.message}`
+              });
+              setStudentLogs(prev => [...prev, `❌ Compilation Drop ${email}: ${err.message}`]);
+            }
           }
         }
 
