@@ -119,7 +119,7 @@ export default function AdminDashboard({ profile, onLogout }) {
 
           try {
             // FIXED: Introduces a 350ms delay pace between creation operations to fully prevent auth/too-many-requests errors
-            await sleep(350);
+            await sleep(2200);
 
             // Standard execution path via admin API orchestration layer
             await createStudentAsAdmin({ 
