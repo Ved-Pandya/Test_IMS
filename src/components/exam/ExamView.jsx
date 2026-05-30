@@ -17,7 +17,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const [violations, setViolations] = useState([]); 
   const [warningCount, setWarningCount] = useState(0);
   
-  // Hard limits adjusted so warnings happen on 1st and 2nd switch; auto-submits on the 3rd.
+  // Hard limits kept strictly at 3 as requested
   const MAX_ALLOWED_VIOLATIONS = 3; 
   
   // --- Safe Modal UI States ---
@@ -196,28 +196,29 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     const correctReward = Number(test.markingScheme?.correct !== undefined ? Math.abs(test.markingScheme.correct) : 3);
     const incorrectPenalty = Number(test.markingScheme?.incorrect !== undefined ? Math.abs(test.markingScheme.incorrect) : 1);
 
-    const isViolatedLock = reasonStr.includes("Security Integrity Limits");
+    const isViolatedLock = reasonStr.includes("Security Integrity Limits") || warningCountRef.current >= MAX_ALLOWED_VIOLATIONS;
 
-    if (isViolatedLock) {
-      totalScore = 0;
-    } else {
-      flatQuestions.forEach((q) => {
-        const studentAns = answers[q.id];
-        if (studentAns === undefined || studentAns === "") return;
+    // FIXED: Run the loop no matter what to ensure incorrect values are fully calculated and deducted into negatives
+    flatQuestions.forEach((q) => {
+      const studentAns = answers[q.id];
+      if (studentAns === undefined || studentAns === "") return;
 
-        if (q.type === "tita") {
-          const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
-          if (isCorrect) totalScore += correctReward;
+      if (q.type === "tita") {
+        const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
+        if (isCorrect) totalScore += correctReward;
+      } else {
+        const isCorrect = Number(studentAns) === Number(q.correct);
+        if (isCorrect) {
+          totalScore += correctReward;
         } else {
-          const isCorrect = Number(studentAns) === Number(q.correct);
-          if (isCorrect) {
-            totalScore += correctReward;
-          } else {
-            // FIXED: Safely reduces the calculated total score metrics via numerical integer deduction subtraction
-            totalScore -= incorrectPenalty;
-          }
+          totalScore -= incorrectPenalty;
         }
-      });
+      }
+    });
+
+    // FIXED: If the student was locked out for cheating, wipe positive scores, but keep negative penalties active!
+    if (isViolatedLock && totalScore > 0) {
+      totalScore = 0;
     }
 
     return {
@@ -229,7 +230,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       score: totalScore,
       total: flatQuestions.length * correctReward,
       timeTaken,
-      reason: reasonStr,
+      reason: isViolatedLock ? "Auto Submission (Security Violation Lockout)" : reasonStr,
       violations, 
       isAutoSubmitted: isViolatedLock || reasonStr.includes("Timer Expired"),
       submittedAt: new Date(),
