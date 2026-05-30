@@ -2,11 +2,13 @@
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTest, getTeacherTests, enrollStudents, updateTestPin } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
-import { collection, query, where, getDocs, doc, deleteDoc } from "firebase/firestore";
+// FIXED: Added getDoc import to fetch individual student data for the Excel sheet
+import { collection, query, where, getDocs, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 import TestCreationForm from "./TestCreationForm";
 import TeacherTestDetail from "./TeacherTestDetail";
 import LeaderboardModal from "./LeaderboardModal";
+import * as XLSX from "xlsx"; // <-- Added Excel library import
 
 export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [selectedTest, setSelectedTest] = useState(null);
@@ -18,6 +20,9 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [loading, setLoading] = useState(true);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const [leaderboardModal, setLeaderboardModal] = useState(null);
+  
+  // Track which test is currently generating an Excel sheet
+  const [exportingId, setExportingId] = useState(null);
 
   const [enrollModal, setEnrollModal] = useState({ open: false, testId: null });
   const [enrollMode, setEnrollMode] = useState("batch"); 
@@ -106,12 +111,74 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
+  // --- NEW ROBUST .XLSX EXPORT ENGINE ---
+  const handleExportXLSX = async (test) => {
+    const testAttempts = allAttempts.filter((a) => a.testId === test.id);
+    
+    if (testAttempts.length === 0) {
+      alert("No candidate attempts found to export for this test yet.");
+      return;
+    }
+
+    setExportingId(test.id); // Trigger loading state
+    
+    try {
+      // 1. Fetch unique students to gather their Registration Numbers and Batch Data
+      const uniqueStudentIds = [...new Set(testAttempts.map(a => a.studentId))];
+      const studentDataMap = {};
+
+      await Promise.all(uniqueStudentIds.map(async (uid) => {
+        try {
+          const userSnap = await getDoc(doc(db, "users", uid));
+          if (userSnap.exists()) {
+            studentDataMap[uid] = userSnap.data();
+          }
+        } catch (e) {
+          console.warn("Could not fetch user details for:", uid);
+        }
+      }));
+
+      // 2. Map the data cleanly into JSON objects specifically formatted for Excel columns
+      const exportData = testAttempts.map(att => {
+        const studentInfo = studentDataMap[att.studentId] || {};
+        const accuracy = att.total > 0 ? Math.round((att.score / att.total) * 100) : 0;
+        const timeMin = Math.round((att.timeTaken || 0) / 60);
+        const violationsCount = att.violations ? att.violations.length : 0;
+        
+        return {
+          "Registration Number": studentInfo.regNo || "N/A",
+          "Student Name": att.studentName || studentInfo.name || "Unknown",
+          "Batch": studentInfo.batch || "N/A",
+          "Score": att.score,
+          "Total Marks": att.total,
+          "Accuracy (%)": `${accuracy}%`,
+          "Time Taken (min)": timeMin,
+          "Submission Type": att.reason || "Manual Run",
+          "Security Violations": violationsCount
+        };
+      });
+
+      // 3. Create the Workbook and Worksheet securely using the xlsx library
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Test Results");
+
+      // 4. Trigger download
+      XLSX.writeFile(workbook, `${test.title.replace(/\s+/g, '_')}_Results.xlsx`);
+      
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate Excel file: " + err.message);
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   const handleConfirmEnroll = async () => {
     setEnrollLoading(true);
     try {
       let uidsToEnroll = [];
 
-      // FIXED: Strict identification check avoids zero-index card reference masking flaws completely
       if (enrollModal.testId === null || enrollModal.testId === undefined || String(enrollModal.testId).trim() === "") {
         throw new Error("Missing test reference allocation.");
       }
@@ -138,7 +205,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         uidsToEnroll = [snap.docs[0].id];
       }
 
-      // Execute enrollment utility layer
       const updatedRoster = await enrollStudents(enrollModal.testId, uidsToEnroll);
       alert(`Successfully assigned test to ${uidsToEnroll.length} student(s)!`);
       
@@ -150,7 +216,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         )
       );
       
-      // Cleanly reset everything on completion success
       setEnrollModal({ open: false, testId: null });
       setBatchInput(""); setExamInput(""); setStudentInput("");
     } catch (err) {
@@ -260,6 +325,17 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                 <div className="teacher-card-actions">
                   <Btn variant="ghost" onClick={() => onDemoTest(test)} style={{ fontSize: 13, padding: "8px 14px", border: `1px solid ${C.border}` }}>👁 Preview</Btn>
                   <Btn variant="ghost" onClick={() => setLeaderboardModal(test)} style={{ fontSize: 13, padding: "8px 14px" }}>🏆 Board</Btn>
+                  
+                  {/* UPDATED: Safely calls XLSX generator and displays loading state */}
+                  <Btn 
+                    variant="ghost" 
+                    onClick={() => handleExportXLSX(test)} 
+                    disabled={exportingId === test.id}
+                    style={{ fontSize: 13, padding: "8px 14px", background: "rgba(16, 185, 129, 0.1)", color: C.greenText || "#10b981", border: "none", opacity: exportingId === test.id ? 0.6 : 1 }}
+                  >
+                    {exportingId === test.id ? "⏳ Exporting..." : "📥 Export"}
+                  </Btn>
+                  
                   <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
                 </div>
@@ -299,7 +375,6 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
             {enrollMode === "individual" && <Input label="Student Email" type="email" value={studentInput} onChange={setStudentInput} placeholder="student@example.com" />}
 
             <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-              {/* FIXED: Prevent destruction of structural testId tokens during layout closure loops */}
               <Btn 
                 type="button"
                 variant="ghost" 
