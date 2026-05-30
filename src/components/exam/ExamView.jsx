@@ -30,7 +30,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const isSystemModalOpenRef = useRef(false);
   const warningCountRef = useRef(0);
   
-  // FIXED: Time lock reference completely stops double-counting overlapping visibility vs blur loops
+  // Time lock reference completely stops double-counting overlapping visibility vs blur loops
   const lastViolationTimeRef = useRef(0);
 
   useEffect(() => {
@@ -110,13 +110,12 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const triggerProctorViolation = (reasonStr) => {
     const now = Date.now();
     
-    // FIXED: If an overlapping browser event fires within 500ms of the last recorded violation, reject it immediately
     if (now - lastViolationTimeRef.current < 500) {
       console.log("Proctor engine blocked duplicate concurrent event structure.");
       return;
     }
     
-    lastViolationTimeRef.current = now; // Lock timestamp instantly
+    lastViolationTimeRef.current = now; 
 
     const newCount = warningCount + 1;
     const timestamp = new Date().toLocaleTimeString();
@@ -192,32 +191,54 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     let totalScore = 0;
     const flatQuestions = test.sections.flatMap((s) => s.questions);
     
-    // FIXED: Convert marking inputs to safe absolute numbers to avoid string logic bugs
-    const correctReward = Number(test.markingScheme?.correct !== undefined ? Math.abs(test.markingScheme.correct) : 3);
-    const incorrectPenalty = Number(test.markingScheme?.incorrect !== undefined ? Math.abs(test.markingScheme.incorrect) : 1);
+    // FIXED: Extremely strict numerical parsing ensures marking inputs cannot become strings 
+    // or negative additions (e.g. subtracting -1 adds 1). We force an absolute positive number.
+    let correctReward = 3;
+    if (test.markingScheme && test.markingScheme.correct !== undefined && test.markingScheme.correct !== "") {
+        correctReward = Math.abs(Number(test.markingScheme.correct));
+    }
+    
+    let incorrectPenalty = 1;
+    if (test.markingScheme && test.markingScheme.incorrect !== undefined && test.markingScheme.incorrect !== "") {
+        incorrectPenalty = Math.abs(Number(test.markingScheme.incorrect));
+    }
 
     const isViolatedLock = reasonStr.includes("Security Integrity Limits") || warningCountRef.current >= MAX_ALLOWED_VIOLATIONS;
 
-    // FIXED: Run the calculator loop for EVERY attempt path first so negative marks accumulate correctly
     flatQuestions.forEach((q) => {
       const studentAns = answers[q.id];
-      if (studentAns === undefined || studentAns === "") return;
+      // Skip untouched questions entirely
+      if (studentAns === undefined || studentAns === null || studentAns === "") return;
+
+      let isCorrect = false;
 
       if (q.type === "tita") {
-        const isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
-        if (isCorrect) totalScore += correctReward;
+        isCorrect = String(studentAns).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
+        
+        if (isCorrect) {
+          totalScore += correctReward;
+        }
+        // Note: TITA typically carries 0 negative marks in standard formats (CAT/CMAT). 
+        // If your custom platform requires TITA penalties, uncomment the line below.
+        // else { totalScore -= incorrectPenalty; }
       } else {
-        const isCorrect = Number(studentAns) === Number(q.correct);
+        // FIXED: Robust MCQ Comparison checks both Index and Text String
+        // In case the DB stored the actual answer word instead of the option array index
+        const isIndexMatch = Number(studentAns) === Number(q.correct);
+        const selectedOptionText = q.options ? q.options[Number(studentAns)] : null;
+        const isTextMatch = selectedOptionText && String(selectedOptionText).trim().toLowerCase() === String(q.correct).trim().toLowerCase();
+        
+        isCorrect = isIndexMatch || isTextMatch;
+
         if (isCorrect) {
           totalScore += correctReward;
         } else {
-          totalScore -= incorrectPenalty; // Subtracts the penalty value correctly into negative score numbers
+          // Strictly subtracts the absolute penalty integer 
+          totalScore -= incorrectPenalty; 
         }
       }
     });
 
-    // FIXED: If locked out for cheating, wipe any positive score baseline to 0, 
-    // but keep their calculated negative marks as an explicit penalty score!
     if (isViolatedLock && totalScore > 0) {
       totalScore = 0;
     }
@@ -567,6 +588,10 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
 }
 
 function PaletteContent({ currentSection, currentQuestionIdx, getQuestionStatus, setCurrentQuestionIdx, test }) {
+  // FIXED: Prevents UI from rendering "--1" if the admin inputted -1 into the database.
+  const displayCorrect = test.markingScheme?.correct !== undefined ? Math.abs(Number(test.markingScheme.correct)) : 3;
+  const displayIncorrect = test.markingScheme?.incorrect !== undefined ? Math.abs(Number(test.markingScheme.incorrect)) : 1;
+
   return (
     <>
       <div>
@@ -616,7 +641,7 @@ function PaletteContent({ currentSection, currentQuestionIdx, getQuestionStatus,
       <Card style={{ padding: 12, background: C.bg, marginTop: "auto" }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 4 }}>SECTION MARKING</div>
         <div style={{ fontSize: 12, color: C.textPrimary, fontWeight: 600 }}>
-          Correct: <span style={{ color: C.greenText }}>+{test.markingScheme?.correct || 3}</span> | Inc: <span style={{ color: C.redText }}>-{test.markingScheme?.incorrect || 1}</span>
+          Correct: <span style={{ color: C.greenText }}>+{displayCorrect}</span> | Inc: <span style={{ color: C.redText }}>-{displayIncorrect}</span>
         </div>
       </Card>
     </>
