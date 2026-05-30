@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { collection, query, where, getDocs } from "firebase/firestore"; 
+import { collection, query, where, getDocs, limit } from "firebase/firestore"; // <-- Added limit import
 import { db } from "../../firebase/config";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
 
 export default function AuthScreen({ onLogin }) {
-  const [identifier, setIdentifier] = useState(""); // Replaced 'email' with a generic identifier
+  const [identifier, setIdentifier] = useState(""); 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,17 +20,21 @@ export default function AuthScreen({ onLogin }) {
 
     setLoading(true);
     try {
-      const cleanIdentifier = identifier.trim().toLowerCase();
+      // 1. Clean the inputs
+      // Note: We do NOT use toLowerCase() here because Registration Numbers might contain 
+      // case-sensitive characters (like CAT-2026-A).
+      const cleanIdentifier = identifier.trim();
       const cleanPassword = password.trim();
 
-      let targetEmail = cleanIdentifier;
+      let targetEmail = cleanIdentifier.toLowerCase(); // Only lowercase if it's an email
 
-      // If the user typed a RegNo instead of an email (it has no '@' symbol)
+      // 2. If the user typed a RegNo instead of an email (it has no '@' symbol)
       if (!cleanIdentifier.includes("@")) {
         // Query the users collection to find the hidden email attached to this regNo
         const q = query(
           collection(db, "users"), 
-          where("regNo", "==", cleanIdentifier)
+          where("regNo", "==", cleanIdentifier),
+          limit(1) // <-- FIXED: Restricts the query size to instantly satisfy the new security rule!
         );
         
         const snap = await getDocs(q);
@@ -43,7 +47,7 @@ export default function AuthScreen({ onLogin }) {
         targetEmail = snap.docs[0].data().email;
       }
 
-      // Complete auth handshake using the resolved email and their password
+      // 3. Complete auth handshake using the resolved email and their password
       await onLogin(targetEmail, cleanPassword);
       
     } catch (err) {
@@ -65,7 +69,6 @@ export default function AuthScreen({ onLogin }) {
         <Card>
           <h2 style={{ margin: "0 0 20px 0", fontSize: 18, color: C.textPrimary, textAlign: "center" }}>Sign In</h2>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* Input changed to accept either RegNo or Email */}
             <Input label="Registration Number (User ID)" type="text" value={identifier} onChange={setIdentifier} placeholder="Enter your Registration No." />
             <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" error={error} />
 
