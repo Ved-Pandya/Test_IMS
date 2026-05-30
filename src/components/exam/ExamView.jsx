@@ -17,7 +17,7 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
   const [violations, setViolations] = useState([]); 
   const [warningCount, setWarningCount] = useState(0);
   
-  // Hard limits kept strictly at 3 as requested
+  // Hard limits adjusted so warnings happen on 1st and 2nd switch; auto-submits on the 3rd.
   const MAX_ALLOWED_VIOLATIONS = 3; 
   
   // --- Safe Modal UI States ---
@@ -192,13 +192,13 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     let totalScore = 0;
     const flatQuestions = test.sections.flatMap((s) => s.questions);
     
-    // FIXED: Safely parse custom marking scheme values into positive integers, eliminating string concatenation issues
+    // FIXED: Convert marking inputs to safe absolute numbers to avoid string logic bugs
     const correctReward = Number(test.markingScheme?.correct !== undefined ? Math.abs(test.markingScheme.correct) : 3);
     const incorrectPenalty = Number(test.markingScheme?.incorrect !== undefined ? Math.abs(test.markingScheme.incorrect) : 1);
 
     const isViolatedLock = reasonStr.includes("Security Integrity Limits") || warningCountRef.current >= MAX_ALLOWED_VIOLATIONS;
 
-    // FIXED: Run the loop no matter what to ensure incorrect values are fully calculated and deducted into negatives
+    // FIXED: Run the calculator loop for EVERY attempt path first so negative marks accumulate correctly
     flatQuestions.forEach((q) => {
       const studentAns = answers[q.id];
       if (studentAns === undefined || studentAns === "") return;
@@ -211,12 +211,13 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         if (isCorrect) {
           totalScore += correctReward;
         } else {
-          totalScore -= incorrectPenalty;
+          totalScore -= incorrectPenalty; // Subtracts the penalty value correctly into negative score numbers
         }
       }
     });
 
-    // FIXED: If the student was locked out for cheating, wipe positive scores, but keep negative penalties active!
+    // FIXED: If locked out for cheating, wipe any positive score baseline to 0, 
+    // but keep their calculated negative marks as an explicit penalty score!
     if (isViolatedLock && totalScore > 0) {
       totalScore = 0;
     }
