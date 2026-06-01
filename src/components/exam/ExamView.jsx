@@ -231,9 +231,8 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       }
     });
 
-    if (isViolatedLock && totalScore > 0) {
-      totalScore = 0;
-    }
+    // FIXED: Removed the logic that wiped totalScore to 0 on security violation.
+    // The student will now keep their calculated score regardless of how they are forced to submit.
 
     return {
       testId: test.id,
@@ -249,6 +248,16 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
       isAutoSubmitted: isViolatedLock || reasonStr.includes("Timer Expired"),
       submittedAt: new Date(),
     };
+  };
+
+  const handleAutoSubmit = (reason) => {
+    isSystemModalOpenRef.current = true;
+    setTerminationReason(reason);
+    setShowTerminationModal(true);
+
+    // FIXED: Immediately calculate and transmit data. No button press needed!
+    const payload = processCalculatedGrading(reason);
+    onSubmitExam(payload);
   };
 
   const handleManualSubmitTrigger = () => {
@@ -268,22 +277,9 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
     setShowSubmitModal(false);
   };
 
-  const handleConfirmTerminationSubmit = () => {
-    isSystemModalOpenRef.current = false;
-    setShowTerminationModal(false);
-    const payload = processCalculatedGrading(`Auto Submission (${terminationReason})`);
-    onSubmitExam(payload);
-  };
-
   const handleCloseWarningModal = () => {
     isSystemModalOpenRef.current = false;
     setShowWarningModal(false);
-  };
-
-  const handleAutoSubmit = (reason) => {
-    isSystemModalOpenRef.current = true;
-    setTerminationReason(reason);
-    setShowTerminationModal(true);
   };
 
   const getQuestionStatus = (qId) => {
@@ -345,7 +341,6 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
           .mobile-drawer-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 17, 23, 0.8); z-index: 200; display: flex; justify-content: flex-end; }
           .mobile-drawer-content { width: 290px; background: ${C.surface}; height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
           
-          /* FIXED: UI Classes to ensure the submit button fits perfectly on small mobile screens */
           .hide-on-mobile { display: none !important; }
           .mobile-header-padding { padding: 0 10px !important; gap: 8px !important; }
           .mobile-header-actions { gap: 6px !important; }
@@ -354,15 +349,13 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         }
       `}</style>
 
-      {/* FIXED HEADER ROW: Flexible sizing prevents truncation on tiny screens */}
+      {/* HEADER ROW */}
       <div className="mobile-header-padding" style={{ height: 64, background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        {/* Left side: Flexible width container forces title to truncate with ... instead of pushing out the submit button */}
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <h1 style={{ fontSize: 15, fontFamily: font.heading, fontWeight: 800, color: C.textPrimary, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{test.title}</h1>
           <span className="hide-on-mobile" style={{ fontSize: 11, color: C.textMuted }}>{studentProfile.name.split(" ")[0]}</span>
         </div>
         
-        {/* Right side: Fixed width container ensures controls are never squished */}
         <div className="mobile-header-actions" style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           {warningCount > 0 && (
             <Badge color="red" style={{ fontWeight: 700 }}>⚠️ <span className="hide-on-mobile">VIOLATIONS: </span>{warningCount}/{MAX_ALLOWED_VIOLATIONS}</Badge>
@@ -569,17 +562,22 @@ export default function ExamView({ test, studentProfile, onSubmitExam }) {
         </div>
       )}
 
-      {/* 3. HARD TERMINATION LOCKOUT DIALOG */}
+      {/* 3. HARD TERMINATION LOCKOUT DIALOG (Now Auto-Submits in Background) */}
       {showTerminationModal && (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "#0a0b0e", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 32, borderRadius: 16, maxWidth: 460, width: "100%", textAlign: "center" }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>🚫</div>
             <h3 style={{ margin: "0 0 12px", color: C.red || "#ef4444", fontSize: 20, fontWeight: 800, fontFamily: font.heading }}>Exam Session Terminated</h3>
             <p style={{ color: C.textSecondary, fontSize: 14, lineHeight: 1.6, margin: "0 0 28px" }}>
-              Your terminal link has been locked due to the following system event:<br />
+              Your session has ended due to the following system event:<br />
               <strong style={{ color: C.textPrimary }}>{terminationReason}</strong>
+              <br /><br />
+              <span style={{ color: C.greenText || "#10b981" }}>✓ Your answers up to this point have been safely auto-submitted.</span>
             </p>
-            <Btn onClick={handleConfirmTerminationSubmit} style={{ background: C.red, color: "#fff", width: "100%", padding: "12px", fontSize: 14, fontWeight: 700, border: "none" }}>Transmit Log Data & Exit</Btn>
+            {/* Disabled informational button to clarify background transmission occurred */}
+            <Btn disabled style={{ background: C.border, color: C.textMuted, width: "100%", padding: "12px", fontSize: 14, fontWeight: 700, border: "none", cursor: "not-allowed" }}>
+              Log Data Transmitted Successfully
+            </Btn>
           </div>
         </div>
       )}
