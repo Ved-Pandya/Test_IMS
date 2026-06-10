@@ -22,12 +22,33 @@ export default function AttemptReview({ attempt, test, onBack }) {
         @media (max-width: 640px) {
           .review-score-banner { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
           .review-options-grid { grid-template-columns: 1fr !important; gap: 8px !important; }
+          .candidate-badge-container { display: none !important; } /* Hide candidate details on very small mobile devices to prevent crowding */
         }
       `}</style>
 
       {/* Static Floating Sticky Header Panel Control */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60, position: "sticky", top: 0, zIndex: 10 }}>
         <span style={{ fontFamily: font.heading, fontWeight: 800, fontSize: 16, color: C.textPrimary }}>Review Performance Metric</span>
+        
+        {/* ADDED: Dynamic Student Review Badge Context */}
+        {attempt?.studentName && (
+          <div className="candidate-badge-container" style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ width: 1, height: 20, background: C.border, margin: "0 16px" }} />
+            <div style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: "6px", 
+              background: "rgba(59, 130, 246, 0.08)", 
+              padding: "5px 12px", 
+              borderRadius: "16px",
+              border: "1px solid rgba(59, 130, 246, 0.15)"
+            }}>
+              <span style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.3px" }}>Candidate:</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.textPrimary }}>{attempt.studentName}</span>
+            </div>
+          </div>
+        )}
+
         <div style={{ flex: 1 }} />
         <Btn onClick={onBack} style={{ padding: "6px 14px", fontSize: 13 }}>Close Review</Btn>
       </div>

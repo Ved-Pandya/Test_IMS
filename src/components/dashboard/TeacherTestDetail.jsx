@@ -1,13 +1,28 @@
+import { useState } from "react";
 import { Badge, Btn, Card, C, font } from "../ui/Primitives";
+import AttemptReview from "./AttemptReview"; // 1. Import the existing review component
 
-// FIXED: Destructured the onResetAttempt prop from the parent state manager container
 export default function TeacherTestDetail({ test, attempts, onBack, onDemo, onResetAttempt }) {
+  // 2. Add state to track which attempt is currently being reviewed
+  const [viewingAttempt, setViewingAttempt] = useState(null);
+
   // Compute analytics data points
   const totalEnrolled = test.enrolledStudents?.length || 0;
   const totalAttempts = attempts.length;
   const avgScore = totalAttempts > 0 
     ? Math.round(attempts.reduce((acc, c) => acc + c.score, 0) / totalAttempts) 
     : 0;
+
+  // 3. If the teacher is viewing a specific attempt, render the AttemptReview component
+  if (viewingAttempt) {
+    return (
+      <AttemptReview 
+        attempt={viewingAttempt} 
+        test={test} 
+        onBack={() => setViewingAttempt(null)} // Close the review to go back to the table
+      />
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font.body, paddingBottom: 40 }}>
@@ -83,7 +98,7 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo, onRe
                 <th>Score Value</th>
                 <th>Submission Route</th>
                 <th>Security Infractions Log</th>
-                <th style={{ textAlign: "right" }}>Actions</th> {/* FIXED: Added Actions header node */}
+                <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -113,21 +128,34 @@ export default function TeacherTestDetail({ test, attempts, onBack, onDemo, onRe
                         <span style={{ color: C.textMuted }}>None (Flawless Integrity)</span>
                       )}
                     </td>
-                    {/* FIXED: Action cell providing the operational entry reset trigger tool */}
                     <td style={{ textAlign: "right" }}>
-                      <Btn 
-                        variant="ghost" 
-                        onClick={() => onResetAttempt(att.id, att.studentName)}
-                        style={{ 
-                          padding: "6px 12px", 
-                          fontSize: 12, 
-                          color: C.redText || "#ef4444", 
-                          background: "rgba(239, 68, 68, 0.05)",
-                          border: "1px solid rgba(239, 68, 68, 0.15)"
-                        }}
-                      >
-                        🔄 Reset Attempt
-                      </Btn>
+                      {/* 4. Added "View Details" button alongside Reset Attempt */}
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                        <Btn 
+                          variant="ghost" 
+                          onClick={() => setViewingAttempt(att)}
+                          style={{ 
+                            padding: "6px 12px", 
+                            fontSize: 12, 
+                            border: `1px solid ${C.border}`
+                          }}
+                        >
+                          👁️ View Details
+                        </Btn>
+                        <Btn 
+                          variant="ghost" 
+                          onClick={() => onResetAttempt(att.id, att.studentName)}
+                          style={{ 
+                            padding: "6px 12px", 
+                            fontSize: 12, 
+                            color: C.redText || "#ef4444", 
+                            background: "rgba(239, 68, 68, 0.05)",
+                            border: "1px solid rgba(239, 68, 68, 0.15)"
+                          }}
+                        >
+                          🔄 Reset
+                        </Btn>
+                      </div>
                     </td>
                   </tr>
                 ))
