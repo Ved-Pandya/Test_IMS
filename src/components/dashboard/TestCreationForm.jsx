@@ -2,16 +2,23 @@ import { useState } from "react";
 import mammoth from "mammoth";
 import { Btn, Card, Input, C, font } from "../ui/Primitives";
 
-export default function TestCreationForm({ teacherId, teacherName, onBack, onSave }) {
-  const [title, setTitle] = useState("");
-  const [duration, setDuration] = useState(120);
-  const [markCorrect, setMarkCorrect] = useState(3);
-  const [markIncorrect, setMarkIncorrect] = useState(1);
+export default function TestCreationForm({ teacherId, teacherName, initialTest, onBack, onSave }) {
+  const isEditing = !!initialTest;
+
+  const [title, setTitle] = useState(initialTest?.title || "");
+  const [duration, setDuration] = useState(initialTest?.duration || 120);
+  const [markCorrect, setMarkCorrect] = useState(initialTest?.markingScheme?.correct ?? 3);
+  const [markIncorrect, setMarkIncorrect] = useState(initialTest?.markingScheme?.incorrect ?? 1);
   const [isParsing, setIsParsing] = useState(false);
 
-  const [sections, setSections] = useState([
-    { id: Date.now().toString(), name: "Section 1", questions: [] }
-  ]);
+  const [sections, setSections] = useState(
+    initialTest?.sections?.length
+      ? initialTest.sections.map((s) => ({
+          ...s,
+          questions: s.questions.map((q) => ({ ...q, options: q.options ? [...q.options] : [] })),
+        }))
+      : [{ id: Date.now().toString(), name: "Section 1", questions: [] }]
+  );
 
   const handleAddSection = () => {
     setSections([...sections, { id: Date.now().toString(), name: `Section ${sections.length + 1}`, questions: [] }]);
@@ -149,7 +156,7 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
 
   const handleSave = () => {
     if (!title.trim()) return alert("Please enter a test title.");
-    const newTest = {
+    const testData = {
       title,
       duration: Number(duration),
       markingScheme: { correct: Number(markCorrect), incorrect: Number(markIncorrect) },
@@ -157,7 +164,7 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
       createdBy: teacherName,
       sections,
     };
-    onSave(newTest);
+    onSave(testData);
   };
 
   return (
@@ -179,9 +186,9 @@ export default function TestCreationForm({ teacherId, teacherName, onBack, onSav
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", height: 60, position: "sticky", top: 0, zIndex: 10 }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>← Back</button>
         <div style={{ width: 1, height: 24, background: C.border, margin: "0 16px" }} />
-        <span style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 15, color: C.textPrimary }}>New Test Engine</span>
+        <span style={{ fontFamily: font.heading, fontWeight: 700, fontSize: 15, color: C.textPrimary }}>{isEditing ? "Edit Test" : "New Test Engine"}</span>
         <div style={{ flex: 1 }} />
-        <Btn onClick={handleSave} style={{ padding: "6px 12px", fontSize: 13 }}>Save Test</Btn>
+        <Btn onClick={handleSave} style={{ padding: "6px 12px", fontSize: 13 }}>{isEditing ? "Save Changes" : "Save Test"}</Btn>
       </div>
 
       <div style={{ maxWidth: 800, margin: "24px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>

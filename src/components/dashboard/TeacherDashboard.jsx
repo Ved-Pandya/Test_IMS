@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
-import { createTest, getTeacherTests, enrollStudents, updateTestPin, deleteTestCompletely } from "../../firebase/tests";
+import { createTest, getTeacherTests, enrollStudents, unenrollStudents, updateTest, updateTestPin, deleteTestCompletely } from "../../firebase/tests";
 import { getAttemptsForTest, getAttemptsForTests } from "../../firebase/attempts";
 import { collection, query, where, getDocs, doc, deleteDoc, getDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
@@ -16,15 +16,17 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [selectedAttempts, setSelectedAttempts] = useState([]);
   
   const [creating, setCreating] = useState(false);
+  const [editingTest, setEditingTest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const [leaderboardModal, setLeaderboardModal] = useState(null);
   const [exportingId, setExportingId] = useState(null);
 
   const [enrollModal, setEnrollModal] = useState({ open: false, testId: null });
-  const [enrollMode, setEnrollMode] = useState("batch"); 
+  const [enrollAction, setEnrollAction] = useState("add");
+  const [enrollMode, setEnrollMode] = useState("batch");
   const [batchInput, setBatchInput] = useState("");
-  const [examInput, setExamInput] = useState(""); 
+  const [examInput, setExamInput] = useState("");
   const [studentInput, setStudentInput] = useState("");
   const [enrollLoading, setEnrollLoading] = useState(false);
 
@@ -79,6 +81,16 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     } catch (err) {
       alert(err.message || "Unable to create test.");
       setCreating(false);
+    }
+  };
+
+  const handleUpdateTest = async (testData) => {
+    try {
+      await updateTest(editingTest.id, testData);
+      await fetchDashboardData(true);
+      setEditingTest(null);
+    } catch (err) {
+      alert(err.message || "Unable to update test.");
     }
   };
 
@@ -219,17 +231,22 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         uidsToEnroll = [snap.docs[0].id];
       }
 
-      const updatedRoster = await enrollStudents(enrollModal.testId, uidsToEnroll);
-      alert(`Successfully assigned test to ${uidsToEnroll.length} student(s)!`);
-      
+      const updatedRoster = enrollAction === "add"
+        ? await enrollStudents(enrollModal.testId, uidsToEnroll)
+        : await unenrollStudents(enrollModal.testId, uidsToEnroll);
+
+      alert(enrollAction === "add"
+        ? `Successfully assigned test to ${uidsToEnroll.length} student(s)!`
+        : `Successfully removed ${uidsToEnroll.length} student(s) from this test.`);
+
       setTests((current) =>
-        current.map((t) => 
-          t.id === enrollModal.testId 
-            ? { ...t, enrolledStudents: updatedRoster || [] } 
+        current.map((t) =>
+          t.id === enrollModal.testId
+            ? { ...t, enrolledStudents: updatedRoster || [] }
             : t
         )
       );
-      
+
       setEnrollModal({ open: false, testId: null });
       setBatchInput(""); setExamInput(""); setStudentInput("");
     } catch (err) {
@@ -241,7 +258,8 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
 
   if (loading) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: C.bg, color: C.textPrimary }}>Loading...</div>;
   if (creating) return <TestCreationForm teacherId={profile.uid} teacherName={profile.name} onBack={() => setCreating(false)} onSave={handleCreateTest} />;
-  
+  if (editingTest) return <TestCreationForm teacherId={profile.uid} teacherName={profile.name} initialTest={editingTest} onBack={() => setEditingTest(null)} onSave={handleUpdateTest} />;
+
   if (selectedTest) {
     return (
       <TeacherTestDetail 
@@ -355,7 +373,8 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                     {exportingId === test.id ? "⏳ Exporting..." : "📥 Export"}
                   </Btn>
                   
-                  <Btn variant="primary" onClick={() => setEnrollModal({ open: true, testId: test.id })} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
+                  <Btn variant="ghost" onClick={() => setEditingTest(test)} style={{ fontSize: 13, padding: "8px 14px" }}>✏️ Edit</Btn>
+                  <Btn variant="primary" onClick={() => { setEnrollModal({ open: true, testId: test.id }); setEnrollAction("add"); }} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
                   
                   <Btn 
@@ -375,8 +394,13 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
       {enrollModal.open && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 17, 23, 0.8)", display: "grid", placeItems: "center", zIndex: 100, padding: 16 }}>
           <Card style={{ width: 480, maxWidth: "100%", padding: 24 }}>
-            <h2 style={{ fontFamily: font.heading, fontSize: 18, margin: "0 0 16px", color: C.textPrimary }}>Assign Test</h2>
-            
+            <h2 style={{ fontFamily: font.heading, fontSize: 18, margin: "0 0 16px", color: C.textPrimary }}>Manage Assigned Students</h2>
+
+            <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 4, marginBottom: 12 }}>
+              <button type="button" onClick={() => setEnrollAction("add")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollAction === "add" ? C.surface : "transparent", color: enrollAction === "add" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>+ Add</button>
+              <button type="button" onClick={() => setEnrollAction("remove")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollAction === "remove" ? C.surface : "transparent", color: enrollAction === "remove" ? C.redText || "#ef4444" : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>− Remove</button>
+            </div>
+
             <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 4, marginBottom: 20, overflowX: "auto" }}>
               <button type="button" onClick={() => setEnrollMode("batch")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "batch" ? C.surface : "transparent", color: enrollMode === "batch" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Batch</button>
               <button type="button" onClick={() => setEnrollMode("exam")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "exam" ? C.surface : "transparent", color: enrollMode === "exam" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Exam</button>
@@ -412,7 +436,15 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
               >
                 Cancel
               </Btn>
-              <Btn type="button" variant="primary" onClick={handleConfirmEnroll} disabled={enrollLoading}>{enrollLoading ? "Assigning..." : "Confirm"}</Btn>
+              <Btn
+                type="button"
+                variant="primary"
+                onClick={handleConfirmEnroll}
+                disabled={enrollLoading}
+                style={enrollAction === "remove" ? { background: "#ef4444", color: "#fff" } : undefined}
+              >
+                {enrollLoading ? "Working..." : (enrollAction === "add" ? "Confirm Add" : "Confirm Remove")}
+              </Btn>
             </div>
           </Card>
         </div>

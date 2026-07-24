@@ -98,6 +98,56 @@ export async function enrollStudents(testId, studentIds) {
 }
 
 /**
+ * Updates the editable fields of an existing test (name, duration, marking scheme, questions).
+ */
+export async function updateTest(testId, { title, duration, sections, markingScheme }) {
+  if (!testId) throw new Error("Missing test reference allocation.");
+
+  const testRef = doc(db, "tests", testId);
+  await updateDoc(testRef, {
+    title,
+    duration,
+    sections,
+    markingScheme,
+  });
+}
+
+/**
+ * Removes an array of student IDs from a test's enrolledStudents list.
+ */
+export async function unenrollStudents(testId, studentIds) {
+  if (!testId) throw new Error("Missing test reference allocation.");
+  if (!studentIds || studentIds.length === 0) return [];
+
+  try {
+    const testRef = doc(db, "tests", testId);
+    const testSnap = await getDoc(testRef);
+
+    if (!testSnap.exists()) {
+      throw new Error("Target evaluation test configuration was not found.");
+    }
+
+    const testData = testSnap.data();
+
+    const currentEnrolled = Array.isArray(testData.enrolledStudents)
+      ? testData.enrolledStudents
+      : [];
+
+    const removalSet = new Set(studentIds);
+    const finalizedArray = currentEnrolled.filter((id) => !removalSet.has(id));
+
+    await updateDoc(testRef, {
+      enrolledStudents: finalizedArray
+    });
+
+    return finalizedArray;
+  } catch (err) {
+    console.error("Unenrollment pipeline exception:", err);
+    throw err;
+  }
+}
+
+/**
  * Generates a new random 4-digit PIN for a test.
  */
 export async function updateTestPin(testId) {
