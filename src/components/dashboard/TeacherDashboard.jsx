@@ -25,10 +25,13 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
   const [enrollModal, setEnrollModal] = useState({ open: false, testId: null });
   const [enrollAction, setEnrollAction] = useState("add");
   const [enrollMode, setEnrollMode] = useState("batch");
-  const [batchInput, setBatchInput] = useState("");
   const [examInput, setExamInput] = useState("");
   const [studentInput, setStudentInput] = useState("");
   const [enrollLoading, setEnrollLoading] = useState(false);
+  const [rosterStudents, setRosterStudents] = useState([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [selectedAddBatches, setSelectedAddBatches] = useState(new Set());
+  const [selectedRemoveBatches, setSelectedRemoveBatches] = useState(new Set());
 
   const fetchDashboardData = async (active = true) => {
     setLoading(true);
@@ -200,29 +203,98 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
     }
   };
 
+  const openEnrollModal = async (testId) => {
+    setEnrollModal({ open: true, testId });
+    setEnrollAction("add");
+    setEnrollMode("batch");
+    setSelectedAddBatches(new Set());
+    setSelectedRemoveBatches(new Set());
+    setExamInput(""); setStudentInput("");
+
+    setRosterLoading(true);
+    try {
+      const q = query(collection(db, "users"), where("role", "==", "student"));
+      const snap = await getDocs(q);
+      setRosterStudents(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      alert("Failed to load student roster: " + err.message);
+    } finally {
+      setRosterLoading(false);
+    }
+  };
+
+  const closeEnrollModal = () => {
+    setEnrollModal({ open: false, testId: null });
+    setExamInput(""); setStudentInput("");
+    setSelectedAddBatches(new Set());
+    setSelectedRemoveBatches(new Set());
+  };
+
+  const toggleBatchSelection = (setFn, batchName) => {
+    setFn((prev) => {
+      const next = new Set(prev);
+      if (next.has(batchName)) next.delete(batchName); else next.add(batchName);
+      return next;
+    });
+  };
+
+  const currentEnrollTest = tests.find((t) => t.id === enrollModal.testId);
+  const currentEnrolledSet = new Set(currentEnrollTest?.enrolledStudents || []);
+
+  const addBatchGroups = {};
+  rosterStudents.forEach((s) => {
+    const b = (s.batch || "").trim();
+    if (!b) return;
+    addBatchGroups[b] = (addBatchGroups[b] || 0) + 1;
+  });
+
+  const removeBatchGroups = {};
+  rosterStudents.forEach((s) => {
+    const b = (s.batch || "").trim();
+    if (!b || !currentEnrolledSet.has(s.id)) return;
+    removeBatchGroups[b] = (removeBatchGroups[b] || 0) + 1;
+  });
+
   const handleConfirmEnroll = async () => {
     setEnrollLoading(true);
     try {
-      let uidsToEnroll = [];
-
       if (enrollModal.testId === null || enrollModal.testId === undefined || String(enrollModal.testId).trim() === "") {
         throw new Error("Missing test reference allocation.");
       }
 
+      if (enrollAction === "remove") {
+        if (selectedRemoveBatches.size === 0) throw new Error("Select at least one batch to remove.");
+        const uidsToRemove = rosterStudents
+          .filter((s) => currentEnrolledSet.has(s.id) && selectedRemoveBatches.has((s.batch || "").trim()))
+          .map((s) => s.id);
+
+        if (uidsToRemove.length === 0) throw new Error("No enrolled students found in the selected batch(es).");
+
+        const updatedRoster = await unenrollStudents(enrollModal.testId, uidsToRemove);
+        alert(`Successfully removed ${uidsToRemove.length} student(s) from this test.`);
+        setTests((current) =>
+          current.map((t) => t.id === enrollModal.testId ? { ...t, enrolledStudents: updatedRoster || [] } : t)
+        );
+        closeEnrollModal();
+        return;
+      }
+
+      let uidsToEnroll = [];
+
       if (enrollMode === "batch") {
-        if (!batchInput.trim()) throw new Error("Please enter a batch name.");
-        const q = query(collection(db, "users"), where("role", "==", "student"), where("batch", "==", batchInput.trim()));
-        const snap = await getDocs(q);
-        if (snap.empty) throw new Error(`No students found in batch: ${batchInput}`);
-        uidsToEnroll = snap.docs.map(doc => doc.id);
-        
+        if (selectedAddBatches.size === 0) throw new Error("Select at least one batch.");
+        uidsToEnroll = rosterStudents
+          .filter((s) => selectedAddBatches.has((s.batch || "").trim()))
+          .map((s) => s.id);
+        if (uidsToEnroll.length === 0) throw new Error("No students found in the selected batch(es).");
+
       } else if (enrollMode === "exam") {
         if (!examInput.trim()) throw new Error("Please select an exam.");
         const q = query(collection(db, "users"), where("role", "==", "student"), where("exam", "==", examInput.trim()));
         const snap = await getDocs(q);
         if (snap.empty) throw new Error(`No students found registered for exam: ${examInput}`);
         uidsToEnroll = snap.docs.map(doc => doc.id);
-        
+
       } else {
         if (!studentInput.trim()) throw new Error("Please enter a student email.");
         const q = query(collection(db, "users"), where("role", "==", "student"), where("email", "==", studentInput.trim()));
@@ -231,24 +303,14 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
         uidsToEnroll = [snap.docs[0].id];
       }
 
-      const updatedRoster = enrollAction === "add"
-        ? await enrollStudents(enrollModal.testId, uidsToEnroll)
-        : await unenrollStudents(enrollModal.testId, uidsToEnroll);
-
-      alert(enrollAction === "add"
-        ? `Successfully assigned test to ${uidsToEnroll.length} student(s)!`
-        : `Successfully removed ${uidsToEnroll.length} student(s) from this test.`);
+      const updatedRoster = await enrollStudents(enrollModal.testId, uidsToEnroll);
+      alert(`Successfully assigned test to ${uidsToEnroll.length} student(s)!`);
 
       setTests((current) =>
-        current.map((t) =>
-          t.id === enrollModal.testId
-            ? { ...t, enrolledStudents: updatedRoster || [] }
-            : t
-        )
+        current.map((t) => t.id === enrollModal.testId ? { ...t, enrolledStudents: updatedRoster || [] } : t)
       );
 
-      setEnrollModal({ open: false, testId: null });
-      setBatchInput(""); setExamInput(""); setStudentInput("");
+      closeEnrollModal();
     } catch (err) {
       alert(err.message);
     } finally {
@@ -374,7 +436,7 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                   </Btn>
                   
                   <Btn variant="ghost" onClick={() => setEditingTest(test)} style={{ fontSize: 13, padding: "8px 14px" }}>✏️ Edit</Btn>
-                  <Btn variant="primary" onClick={() => { setEnrollModal({ open: true, testId: test.id }); setEnrollAction("add"); }} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
+                  <Btn variant="primary" onClick={() => openEnrollModal(test.id)} style={{ fontSize: 13, padding: "8px 14px" }}>Assign</Btn>
                   <Btn variant="ghost" onClick={() => openTestDetails(test)} style={{ fontSize: 13, padding: "8px 14px" }}>Results</Btn>
                   
                   <Btn 
@@ -401,14 +463,38 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
               <button type="button" onClick={() => setEnrollAction("remove")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollAction === "remove" ? C.surface : "transparent", color: enrollAction === "remove" ? C.redText || "#ef4444" : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>− Remove</button>
             </div>
 
-            <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 4, marginBottom: 20, overflowX: "auto" }}>
-              <button type="button" onClick={() => setEnrollMode("batch")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "batch" ? C.surface : "transparent", color: enrollMode === "batch" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Batch</button>
-              <button type="button" onClick={() => setEnrollMode("exam")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "exam" ? C.surface : "transparent", color: enrollMode === "exam" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Exam</button>
-              <button type="button" onClick={() => setEnrollMode("individual")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "individual" ? C.surface : "transparent", color: enrollMode === "individual" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>Individual</button>
-            </div>
+            {enrollAction === "add" && (
+              <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 4, marginBottom: 20, overflowX: "auto" }}>
+                <button type="button" onClick={() => setEnrollMode("batch")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "batch" ? C.surface : "transparent", color: enrollMode === "batch" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Batch</button>
+                <button type="button" onClick={() => setEnrollMode("exam")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "exam" ? C.surface : "transparent", color: enrollMode === "exam" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>By Exam</button>
+                <button type="button" onClick={() => setEnrollMode("individual")} style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: enrollMode === "individual" ? C.surface : "transparent", color: enrollMode === "individual" ? C.textPrimary : C.textMuted, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>Individual</button>
+              </div>
+            )}
 
-            {enrollMode === "batch" && <Input label="Batch Name" value={batchInput} onChange={setBatchInput} placeholder="e.g. BATCH-A" />}
-            {enrollMode === "exam" && (
+            {enrollAction === "add" && enrollMode === "batch" && (
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Select Batch(es)</label>
+                {rosterLoading ? (
+                  <div style={{ color: C.textMuted, fontSize: 13, padding: "12px 0" }}>Loading batches...</div>
+                ) : Object.keys(addBatchGroups).length === 0 ? (
+                  <div style={{ color: C.textMuted, fontSize: 13, padding: "12px 0" }}>No students with a batch assigned were found.</div>
+                ) : (
+                  <div style={{ maxHeight: 220, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 8, padding: 6 }}>
+                    {Object.keys(addBatchGroups).sort().map((batchName) => {
+                      const checked = selectedAddBatches.has(batchName);
+                      return (
+                        <label key={batchName} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, cursor: "pointer", background: checked ? C.bg : "transparent" }}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleBatchSelection(setSelectedAddBatches, batchName)} />
+                          <span style={{ color: C.textPrimary, fontSize: 13, fontWeight: 600, flex: 1 }}>{batchName}</span>
+                          <span style={{ color: C.textMuted, fontSize: 12 }}>({addBatchGroups[batchName]})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {enrollAction === "add" && enrollMode === "exam" && (
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Select Exam Type</label>
                 <select value={examInput} onChange={(e) => setExamInput(e.target.value)} style={{ width: "100%", padding: "12px 16px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, color: C.textPrimary, fontFamily: font.body, fontSize: 14, outline: "none" }}>
@@ -422,16 +508,37 @@ export default function TeacherDashboard({ profile, onLogout, onDemoTest }) {
                 </select>
               </div>
             )}
-            {enrollMode === "individual" && <Input label="Student Email" type="email" value={studentInput} onChange={setStudentInput} placeholder="student@example.com" />}
+            {enrollAction === "add" && enrollMode === "individual" && <Input label="Student Email" type="email" value={studentInput} onChange={setStudentInput} placeholder="student@example.com" />}
+
+            {enrollAction === "remove" && (
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSecondary, marginBottom: 8, display: "block" }}>Select Assigned Batch(es) To Remove</label>
+                {rosterLoading ? (
+                  <div style={{ color: C.textMuted, fontSize: 13, padding: "12px 0" }}>Loading assigned batches...</div>
+                ) : Object.keys(removeBatchGroups).length === 0 ? (
+                  <div style={{ color: C.textMuted, fontSize: 13, padding: "12px 0" }}>No batches are currently assigned to this test.</div>
+                ) : (
+                  <div style={{ maxHeight: 220, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 8, padding: 6 }}>
+                    {Object.keys(removeBatchGroups).sort().map((batchName) => {
+                      const checked = selectedRemoveBatches.has(batchName);
+                      return (
+                        <label key={batchName} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, cursor: "pointer", background: checked ? C.bg : "transparent" }}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleBatchSelection(setSelectedRemoveBatches, batchName)} />
+                          <span style={{ color: C.textPrimary, fontSize: 13, fontWeight: 600, flex: 1 }}>{batchName}</span>
+                          <span style={{ color: C.textMuted, fontSize: 12 }}>({removeBatchGroups[batchName]})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-              <Btn 
+              <Btn
                 type="button"
-                variant="ghost" 
-                onClick={() => {
-                  setEnrollModal((prev) => ({ ...prev, open: false }));
-                  setBatchInput(""); setExamInput(""); setStudentInput("");
-                }} 
+                variant="ghost"
+                onClick={closeEnrollModal}
                 disabled={enrollLoading}
               >
                 Cancel
