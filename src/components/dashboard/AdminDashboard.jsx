@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { Badge, Btn, Card, Input, C, font } from "../ui/Primitives";
 import { createTeacherAsAdmin, updateStudentBatchByEmail } from "../../firebase/auth";
-import { collection, query, where, getDocs, doc, updateDoc, setDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase/config";
 
 export default function AdminDashboard({ profile, onLogout }) {
@@ -95,7 +95,12 @@ export default function AdminDashboard({ profile, onLogout }) {
 
           const email = String(rawEmail || "").trim().toLowerCase();
           const name = String(rawName || "").trim();
-          const regNo = String(rawRegNo || "").trim();
+          let regNo = String(rawRegNo || "").trim();
+          if (regNo.endsWith(".0")) {
+            regNo = regNo.substring(0, regNo.length - 2);
+          }
+          regNo = regNo.toUpperCase();
+          
           const mobile = String(rawMobile || "").trim();
           const exam = String(rawExam || "").trim();
           
@@ -117,7 +122,11 @@ export default function AdminDashboard({ profile, onLogout }) {
           try {
             // FIXED: Bypasses client-side Auth rate limits entirely by writing straight to Firestore.
             // Accounts will automatically initialize dynamically the exact millisecond they log in.
-            await setDoc(doc(db, "users", email), {
+            const userRef = doc(db, "users", email);
+            const existingSnap = await getDoc(userRef);
+            const alreadyProvisioned = existingSnap.exists() && existingSnap.data().isAuthProvisioned === true;
+
+            const studentPayload = {
               email,
               name,
               regNo,
@@ -125,9 +134,15 @@ export default function AdminDashboard({ profile, onLogout }) {
               batch: batch || "Unassigned",
               exam: exam || "Unassigned",
               role: "student",
-              isAuthProvisioned: false, // Flag signals login routine to handle Just-in-Time auth creation
               updatedAt: new Date()
-            }, { merge: true });
+            };
+            // Only (re)flag as unprovisioned for accounts that haven't logged in yet —
+            // otherwise re-uploading/editing an already-active student breaks their next login.
+            if (!alreadyProvisioned) {
+              studentPayload.isAuthProvisioned = false;
+            }
+
+            await setDoc(userRef, studentPayload, { merge: true });
             
             results.push({
               "Registration No": regNo,
@@ -174,18 +189,32 @@ export default function AdminDashboard({ profile, onLogout }) {
     setLoading(true);
     try {
       const cleanEmail = sEmail.trim().toLowerCase();
-      const cleanRegNo = sRegNo.trim();
+      let cleanRegNo = sRegNo.trim();
+      if (cleanRegNo.endsWith(".0")) {
+        cleanRegNo = cleanRegNo.substring(0, cleanRegNo.length - 2);
+      }
+      cleanRegNo = cleanRegNo.toUpperCase();
 
-      await setDoc(doc(db, "users", cleanEmail), {
-        name: sName.trim(), 
-        email: cleanEmail, 
-        batch: sBatch.trim(), 
-        regNo: cleanRegNo, 
+      const userRef = doc(db, "users", cleanEmail);
+      const existingSnap = await getDoc(userRef);
+      const alreadyProvisioned = existingSnap.exists() && existingSnap.data().isAuthProvisioned === true;
+
+      const studentPayload = {
+        name: sName.trim(),
+        email: cleanEmail,
+        batch: sBatch.trim(),
+        regNo: cleanRegNo,
         mobile: sMobile.trim(),
         exam: sExam.trim(),
         role: "student",
-        isAuthProvisioned: false
-      }, { merge: true });
+      };
+      // Only (re)flag as unprovisioned for accounts that haven't logged in yet —
+      // otherwise editing an already-active student breaks their next login.
+      if (!alreadyProvisioned) {
+        studentPayload.isAuthProvisioned = false;
+      }
+
+      await setDoc(userRef, studentPayload, { merge: true });
       
       setSingleStudentCreds({ email: cleanEmail, password: cleanRegNo });
       

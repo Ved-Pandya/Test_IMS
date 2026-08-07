@@ -32,34 +32,61 @@ export async function login(identifier, password) {
     throw new Error("Credentials cannot be processed empty.");
   }
 
-  // Path A: If logging in using a plain email string (Admins / Teachers)
+  let studentEmail = "";
+  let isStudent = false;
+  let isAuthProvisioned = false;
+  let actualRegNo = "";
+
+  // Path A: If logging in using a plain email string (Admins / Teachers / Students)
   if (cleanInput.includes("@")) {
-    const cred = await signInWithEmailAndPassword(auth, cleanInput.toLowerCase(), cleanPassword);
-    return cred.user;
+    const emailKey = cleanInput.toLowerCase();
+    const userSnap = await getDoc(doc(db, "users", emailKey));
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      isStudent = userData.role === "student";
+      studentEmail = userData.email;
+      isAuthProvisioned = userData.isAuthProvisioned;
+      actualRegNo = userData.regNo || "";
+    } else {
+      // Fallback for admin or auth-only accounts
+      studentEmail = emailKey;
+    }
+  } else {
+    // Path B: If logging in using a Student Registration Number (Query case-insensitively)
+    const searchRegNo = cleanInput.toUpperCase();
+    const studentQuery = query(
+      collection(db, "users"),
+      where("role", "==", "student"),
+      where("regNo", "==", searchRegNo),
+      limit(1)
+    );
+    const snap = await getDocs(studentQuery);
+
+    if (snap.empty) {
+      throw new Error("Invalid Registration Number. No matching student profile found.");
+    }
+
+    const studentDoc = snap.docs[0];
+    const studentData = studentDoc.data();
+    studentEmail = studentData.email;
+    isStudent = true;
+    isAuthProvisioned = studentData.isAuthProvisioned;
+    actualRegNo = studentData.regNo || "";
   }
-
-  // Path B: If logging in using a Student Registration Number
-  const studentQuery = query(
-    collection(db, "users"), 
-    where("role", "==", "student"), 
-    where("regNo", "==", cleanInput),
-    limit(1) // FIXED: Added limit(1) to satisfy Firestore unauthenticated read rules!
-  );
-  const snap = await getDocs(studentQuery);
-
-  if (snap.empty) {
-    throw new Error("Invalid Registration Number. No matching student profile found.");
-  }
-
-  const studentDoc = snap.docs[0];
-  const studentData = studentDoc.data();
-  const studentEmail = studentData.email;
 
   // Ensure programmatic password string satisfies the minimum length requirement (> 6 characters)
-  const runtimeAuthPassword = cleanPassword.length < 6 ? `${cleanPassword}@portal` : cleanPassword;
+  const runtimeAuthPassword = (isStudent && cleanPassword.length < 6) 
+    ? `${cleanPassword}@portal` 
+    : cleanPassword;
 
   // INTERCEPT: First-time login path under lazy provisioning method
-  if (studentData.isAuthProvisioned === false) {
+  if (isStudent && isAuthProvisioned === false) {
+    // A student's first login must be with their actual Registration Number as the password —
+    // otherwise anyone who knows a valid reg no. could claim the account with an arbitrary password.
+    if (!actualRegNo || cleanPassword.toUpperCase() !== actualRegNo.toUpperCase()) {
+      throw new Error("Invalid Registration Number or Password.");
+    }
+
     console.log("Lazy Provision Engine Intercept: Creating live authentication node parameters...");
     try {
       // 1. Register account credentials inside Firebase Auth safely
@@ -139,7 +166,7 @@ export function subscribeToAuth(callback) {
 
 export async function createStudentAsAdmin({ email, name, batch, regNo, mobile, exam }) {
   const cleanEmail = email.trim().toLowerCase();
-  const cleanPassword = regNo.trim();
+  const cleanPassword = regNo.trim().toUpperCase();
 
   await setDoc(doc(db, "users", cleanEmail), {
     email: cleanEmail,
